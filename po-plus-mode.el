@@ -48,14 +48,48 @@
   "Message to be displayed when a string has not yet been translated."
   :type 'string)
 
-(defcustom po-plus-empty-string-face
-  '(:inherit font-lock-keyword-face)
-  "Face to use for empty strings."
-  :type 'face)
+(defface po-plus-translator-comments-face
+  '((t (:inherit font-lock-comment-face)))
+  "Face to use for translator comments.")
 
-(defcustom po-plus-normal-string-face nil
-  "Face to use for normal strings."
-  :type 'face)
+(defface po-plus-extracted-comments-face
+  '((t (:slant italic
+               :inherit font-lock-doc-face)))
+  "Face to use for extracted comments.")
+
+(defface po-plus-reference-face
+  '((t (:inherit link
+                 :height 0.7)))
+  "Face to use for code references.")
+
+(defface po-plus-msgid-face
+  '((t (:foreground "burlywood"
+                    :height 0.9)))
+  "Face to use for msgid.")
+
+(defface po-plus-msgid-plural-face
+  '((t (:inherit po-plus-msgid-face)))
+  "Face to use for the plural form of msgid.")
+
+(defface po-plus-msgstr-face
+  nil
+  "Face to use for msgstr.")
+
+(defface po-plus-empty-msgid-face
+  '((t (:inherit font-lock-keyword-face)))
+  "Face to use for empty msgid.")
+
+(defface po-plus-flag-face
+  '((t (:slant normal
+        :box t
+        :inherit font-lock-keyword-face)))
+  "Face to use for flags.")
+
+(defface po-plus-divider-face
+  '((t (:underline t
+                   :extend t
+                   :inherit shadow)))
+  "Face to use for dividers.")
 
 (cl-defstruct po-plus-entry
   translator-comments
@@ -67,8 +101,7 @@
   msgctxt
   msgid
   msgid-plural
-  msgstr
-  overlays)
+  msgstr)
 
 (cl-defstruct po-plus-edit-session
   entry
@@ -78,19 +111,6 @@
 (cl-defstruct po-plus-buffer-data
   source-file
   entries)
-
-(defun po-plus--set-empty-overlay-metadata (ov)
-  (overlay-put ov 'empty t)
-  (overlay-put ov 'face po-plus-empty-string-face))
-
-(defun po-plus--remove-empty-overlay-metadata (ov)
-  (overlay-put ov 'empty nil)
-  (overlay-put ov 'face po-plus-normal-string-face))
-
-(defun po-plus--editable-overlay-at-point ()
-  (seq-find
-   (lambda (ov) (overlay-get ov 'po-plus-entry))
-   (overlays-at (point))))
 
 (defun po-plus-edit-abort ()
   (interactive)
@@ -106,26 +126,21 @@
        (setf (po-plus-entry-msgstr ,entry) ,value)
      (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
 
-(defun po-plus--refresh-entry-msgstr (entry plural-index)
-  (let* ((idx (or plural-index 0))
-         (ov (nth idx (po-plus-entry-overlays entry)))
-         (beg (overlay-start ov))
-         (end (overlay-end ov))
-         (text (or (po-plus-entry-msgstr-with-index entry plural-index) "")))
-    (let ((inhibit-read-only t)
-          (inhibit-modification-hooks t))
-      (save-excursion
-        (goto-char beg)
-        (delete-region beg end)
-        (let ((new-beg (point)))
-          (if (string-empty-p text)
-              (progn
-                (po-plus--insert-read-only po-plus-empty-string-message)
-                (po-plus--set-empty-overlay-metadata ov))
-            (progn
-              (po-plus--insert-read-only text)
-              (po-plus--remove-empty-overlay-metadata ov)))
-          (move-overlay ov new-beg (point)))))))
+(defun po-plus--refresh-entry-msgstr (entry)
+  (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
+    (unless (memq entry entries)
+      (error "Entry not found in entries list."))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((match (text-property-search-forward 'entry entry t)))
+        (unless match
+          (error "Couldn't find entry in buffer."))
+        (let ((start (prop-match-beginning match))
+              (end (prop-match-end match))
+              (inhibit-read-only t))
+          (goto-char start)
+          (delete-region start end)
+          (po-plus--insert-entry entry))))))
 
 (defun po-plus-edit-commit ()
   (interactive)
@@ -137,28 +152,23 @@
     (let* ((data (buffer-local-value 'po-plus--buffer-data source-buffer))
            (entries (po-plus-buffer-data-entries data))
            (idx (po-plus-edit-session-plural-index session)))
-      (unless (memq entry entries)
-        (error "Entry not found in entries list"))
       (setf (po-plus-entry-msgstr-with-index entry idx) text))
 
     (with-current-buffer source-buffer
-      (po-plus--refresh-entry-msgstr
-       entry
-       (po-plus-edit-session-plural-index session)))
+      (po-plus--refresh-entry-msgstr entry))
     (kill-buffer-and-window)))
 
 (defun po-plus-edit-string ()
   (interactive)
-  (let* ((ov (po-plus--editable-overlay-at-point))
-         (entry (and ov (overlay-get ov 'po-plus-entry))))
-    (unless entry
+  (let ((editable (get-text-property (point) 'editable-string))
+        (entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'plural-index)))
+    (unless editable
       (user-error "No editable string here"))
 
     (let* ((source-buffer (current-buffer))
            (buf (get-buffer-create "*PO+ Edit*"))
-           (text (if (overlay-get ov 'index)
-                     (aref (po-plus-entry-msgstr entry) (overlay-get ov 'index))
-                   (po-plus-entry-msgstr entry))))
+           (text (po-plus-entry-msgstr-with-index entry plural-index)))
       (with-current-buffer buf
         (erase-buffer)
         (insert text)
@@ -168,43 +178,29 @@
         (setq-local po-plus--edit-session
                     (make-po-plus-edit-session
                      :entry entry
-                     :plural-index (overlay-get ov 'index)
+                     :plural-index plural-index
                      :source-buffer source-buffer)))
       (pop-to-buffer buf))))
 
 (defun po-plus-jump-to-prev-string ()
   (interactive)
-  (let ((pos (point))
-        prev
-        found)
-    (while (and (not found)
-                (setq prev (previous-overlay-change pos))
-                (< prev pos))
-      (setq pos prev)
-      (dolist (ov (overlays-at pos))
-        (when (overlay-get ov 'po-plus-entry)
-          (pulse-momentary-highlight-overlay ov)
-          (setq found (overlay-start ov)))))
-    (if found
-        (goto-char found)
-      (message "No previous entry"))))
+  (let ((match (text-property-search-backward 'editable-string t t t)))
+    (unless match
+      (user-error "No previous entry"))
+    (let ((start (prop-match-beginning match))
+          (end   (prop-match-end match)))
+      (goto-char start)
+      (pulse-momentary-highlight-region start end))))
 
 (defun po-plus-jump-to-next-string ()
   (interactive)
-  (let ((pos (point))
-        next
-        found)
-    (while (and (not found)
-                (setq next (next-overlay-change pos))
-                (> next pos))
-      (setq pos next)
-      (dolist (ov (overlays-at pos))
-        (when (overlay-get ov 'po-plus-entry)
-          (pulse-momentary-highlight-overlay ov)
-          (setq found (overlay-start ov)))))
-    (if found
-        (goto-char found)
-      (message "No next entry"))))
+  (let ((match (text-property-search-forward 'editable-string t t t)))
+    (unless match
+      (user-error "No next entry"))
+    (let ((start (prop-match-beginning match))
+          (end   (prop-match-end match)))
+      (goto-char start)
+      (pulse-momentary-highlight-region start end))))
 
 (defun po-plus--flush-field (current field acc &optional index)
   (when (and current field)
@@ -233,7 +229,7 @@
 
 (defun po-plus-parse-header (header)
   (let (header-plist)
-    (dolist (elt (string-split header "\n" t "[[:space:]]+"))
+    (dolist (elt (string-split (string-trim header) "\n" t "[[:space:]]+"))
       (let* ((split-pos (string-search ":" elt))
              (key (string-trim (format ":%s" (substring elt 0 split-pos))))
              (val (string-trim (substring elt (1+ split-pos)))))
@@ -274,8 +270,10 @@
                     (po-plus-entry-extracted-comments current)))
 
              ((string-match "^#: \\(.*\\)" line)
-              (push (match-string 1 line)
-                    (po-plus-entry-references current)))
+              (setf (po-plus-entry-references current)
+                    (append
+                     (split-string (match-string 1 line) " " t "[[:space:]]+")
+                     (po-plus-entry-references current))))
 
              ((string-match "^#, \\(.*\\)" line)
               (setf (po-plus-entry-flags current)
@@ -349,13 +347,23 @@
   (read (concat "\"" s "\"")))
 
 (defun po-plus--insert-maybe-multiline-string (string)
-  (let* ((str (substring (format "%S" string) 1 -1))
-         (split (split-string str "\n")))
-    (if (eq (length split) 1)
-        (insert "\"" (car split) "\"\n")
+  (let* ((ends-with-nl (string-suffix-p "\n" string))
+         (str (substring (format "%S" string) 1 -1))
+         (lines (split-string str "\n")))
+    (when ends-with-nl
+      (setq lines (nbutlast lines 1)))
+    (if (= (length lines) 1)
+        (insert "\"" (car lines) "\"\n")
       (insert "\"\"\n")
-      (dolist (part split)
-        (insert "\"" part "\\n\"\n")))))
+      (dotimes (i (length lines))
+        (insert "\""
+                (nth i lines)
+                (if (and (>= i (1- (length lines)))
+                         (not ends-with-nl))
+                    ""
+                  "\\n")
+                "\"\n")))))
+
 
 (defun po-plus-write-entries (entries)
   (dolist (entry entries)
@@ -408,7 +416,8 @@
     (user-error "This is likely not a PO file. Aborting"))
   (let ((buf-name (format "PO+ %s" (buffer-name)))
         (source-buffer (current-buffer))
-        (source-file buffer-file-name))
+        (source-file buffer-file-name)
+        (inhibit-read-only t))
     (if (get-buffer buf-name)
         (switch-to-buffer (get-buffer buf-name))
       (switch-to-buffer (get-buffer-create buf-name))
@@ -418,79 +427,135 @@
                    :entries (po-plus-parse-buffer source-buffer)
                    :source-file source-file))
       (dolist (entry (po-plus-buffer-data-entries po-plus--buffer-data))
-        (po-plus--insert-entry entry))
+        (po-plus--insert-entry entry)
+        (insert "\n")
+        (goto-char (point-max)))
       (goto-char (point-min)))))
 
-(defun po-plus--insert-msgstr (msgstr entry)
-  (let ((beg (point))
-        ov)
-    (po-plus--insert-read-only (if (string-empty-p msgstr)
-                                   po-plus-empty-string-message
-                                 msgstr))
-    (setq ov (make-overlay beg (point)))
-    (when (string-empty-p msgstr)
-      (po-plus--set-empty-overlay-metadata ov))
-    (overlay-put ov 'po-plus-entry entry)
-    (overlay-put ov 'line-prefix "→ ")
-    (setf (po-plus-entry-overlays entry) (append (po-plus-entry-overlays entry) `(,ov)))
-    ov))
+(defun po-plus--insert-translator-comments (comments)
+  (dolist (comment (reverse comments))
+    (insert (propertize comment
+                        'rear-sticky nil
+                        'front-sticky nil
+                        'face 'po-plus-translator-comments-face) "\n")))
+
+(defun po-plus--insert-extracted-comments (comments)
+  (dolist (comment (reverse comments))
+    (insert (propertize comment
+                        'rear-sticky nil
+                        'front-sticky nil
+                        'face 'po-plus-extracted-comments-face) "\n")))
+
+(defun po-plus--insert-msgid (msgid)
+  (insert (propertize msgid
+                      'line-prefix "• "
+                      'rear-sticky nil
+                      'front-sticky nil
+                      'face 'po-plus-msgid-face) "\n"))
+
+(defun po-plus--insert-msgid-plural (msgid-plural)
+  (insert (propertize msgid-plural
+                      'line-prefix "→ "
+                      'rear-sticky nil
+                      'front-sticky nil
+                      'face 'po-plus-msgid-plural-face) "\n"))
+
+(defun po-plus--insert-msgstr-as-string (msgstr)
+  (let ((empty (string= msgstr "")))
+    (insert (propertize (if empty po-plus-empty-string-message msgstr)
+                        'line-prefix "→ "
+                        'rear-sticky nil
+                        'front-sticky nil
+                        'editable-string t
+                        'face (if empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n")))
+
+(defun po-plus--insert-msgstr-as-vector (msgstr)
+  (dotimes (i (length msgstr))
+    (let* ((str (aref msgstr i))
+           (empty (string= str "")))
+      (insert (propertize (if empty po-plus-empty-string-message str)
+                          'line-prefix (format "[%d] → " i)
+                          'rear-sticky nil
+                          'front-sticky nil
+                          'editable-string t
+                          'plural-index i
+                          'face (if empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n"))))
+
+(defun po-plus--insert-references (references)
+  (setq references (reverse references))
+  (dotimes (i (length references))
+    (insert (propertize (nth i references)
+                        'face 'po-plus-reference-face
+                        'rear-sticky nil
+                        'front-sticky nil
+                        'mouse-face 'highlight
+                        'help-echo "Visit reference")
+            (if (< i (1- (length references)))
+                (propertize "|" 'face 'shadow)
+              "")))
+  (insert "\n"))
+
+(defun po-plus--insert-flags (flags)
+  (setq flags (reverse flags))
+  (dotimes (i (length flags))
+    (insert (propertize (nth i flags)
+                        'rear-sticky nil
+                        'front-sticky nil
+                        'face 'po-plus-flag-face)
+            (if (< i (1- (length flags)))
+                " "
+              "")))
+  (insert "\n"))
+
+(defun po-plus--insert-msgstr (msgstr)
+  (cond
+   ((stringp msgstr)
+    (po-plus--insert-msgstr-as-string msgstr))
+   ((vectorp msgstr)
+    (po-plus--insert-msgstr-as-vector msgstr))))
+
+(defun po-plus--insert-divider ()
+  (insert (propertize "\n"
+                      'rear-sticky nil
+                      'front-sticky nil
+                      'face 'po-plus-divider-face)))
 
 (defun po-plus--insert-entry (entry)
-  (let ((msgid (po-plus-entry-msgid entry))
-        (msgstr (po-plus-entry-msgstr entry)))
+  (let ((beg (point))
+        (msgid (po-plus-entry-msgid entry)))
     (if (string= msgid "")
-        (po-plus--insert-header (po-plus-parse-header msgstr))
-      (dolist (flag (po-plus-entry-flags entry))
-        (let ((beg (point)))
-          (po-plus--insert-read-only flag)
-          (let ((ov (make-overlay beg (point))))
-            (overlay-put ov 'face '(:box
-                                    (:line-size 1 :color "red")
-                                    :inherit font-lock-comment-face)))
-          (po-plus--insert-read-only " ")))
+        (progn
+          (goto-char (point-min))
+          (setq beg (point-min))
+          (po-plus--insert-header (po-plus-parse-header (po-plus-entry-msgstr entry))))
       (when (po-plus-entry-flags entry)
-        (po-plus--insert-read-only "\n"))
-      (let ((beg (point)))
-        (po-plus--insert-read-only msgid "\n")
-        (let ((ov (make-overlay beg (point))))
-          (overlay-put ov 'face '(:slant italic
-                                         :foreground "burlywood"))
-          (overlay-put ov 'line-prefix "• "))
-        (setq beg (point))
-        (cond
-         ((stringp msgstr)
-          (po-plus--insert-msgstr msgstr entry))
-         ((vectorp msgstr)
-          (dotimes (i (length msgstr))
-            (let ((str (aref msgstr i))
-                  ov)
-              (setq ov (po-plus--insert-msgstr str entry))
-              (overlay-put ov 'line-prefix (format "%s → " i))
-              (overlay-put ov 'index i)
-              (when (< i (1- (length msgstr)))
-                (po-plus--insert-read-only "\n")))))))))
-  (po-plus--insert-read-only "\n\n"))
-
-(defun po-plus--insert-read-only (&rest strings)
-  "Insert into a read only buffer"
-  (let ((inhibit-read-only t)
-        (inhibit-modification-hooks t))
-    (apply #'insert strings)))
+        (po-plus--insert-flags (po-plus-entry-flags entry)))
+      (when (po-plus-entry-translator-comments entry)
+        (po-plus--insert-translator-comments (po-plus-entry-translator-comments entry)))
+      (when (po-plus-entry-extracted-comments entry)
+        (po-plus--insert-extracted-comments (po-plus-entry-extracted-comments entry)))
+      (po-plus--insert-msgid msgid)
+      (when (po-plus-entry-msgid-plural entry)
+        (po-plus--insert-msgid-plural (po-plus-entry-msgid-plural entry)))
+      (po-plus--insert-msgstr (po-plus-entry-msgstr entry))
+      (when (po-plus-entry-references entry)
+        (po-plus--insert-references (po-plus-entry-references entry)))
+      (po-plus--insert-divider))
+    (add-text-properties beg (point) `(entry ,entry
+                                             'rear-sticky nil
+                                             'front-sticky nil))))
 
 (defun po-plus--insert-header (header)
-  "Insert HEADER plist in pairs with overlays."
   (dolist (i (number-sequence 0 (- (length header) 2) 2))
     (let* ((key (nth i header))
-           (val (nth (1+ i) header))
-           (beg (point)))
-      (po-plus--insert-read-only (format "%s %s\n" (symbol-name key) val))
-      (let ((ov (make-overlay beg (+ (length (symbol-name key)) beg))))
-        (overlay-put ov 'face '(:box (:line-width 1 :color "grey"))))
-      (let ((ov (make-overlay beg (point))))
-        (overlay-put ov 'face '(:inherit font-lock-comment-face))))))
+           (val (nth (1+ i) header)))
+      (insert (format "%s %s\n"
+                      (propertize (symbol-name key)
+                                  'face '(:box t))
+                      val)))))
 
 (defun po-plus-imenu-index ()
-  "Return an index alist of PO entries for `imenu`."
+  "Return an index alist of PO entries for `imenu'."
   (let (index)
     (save-excursion
       (goto-char (point-min))
@@ -509,7 +574,10 @@
 (define-derived-mode po-plus-edit-mode text-mode "PO+ Edit"
   "Edit a single PO translation."
   (setq-local header-line-format
-              "Edit translation — C-c C-c to save, C-c C-k to cancel"))
+              (format
+               "Edit translation — %s to save, %s to cancel"
+               (propertize "C-c C-c" 'face '(:box t))
+               (propertize "C-c C-k" 'face '(:box t)))))
 
 (provide 'po-plus-mode)
 
