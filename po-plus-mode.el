@@ -51,31 +51,37 @@
   :type 'string)
 
 (defface po-plus-translator-comments-face
-  '((t (:inherit font-lock-comment-face)))
+  `((t ,(list
+         :inherit 'font-lock-comment-face)))
   "Face to use for translator comments.")
 
 (defface po-plus-extracted-comments-face
-  '((t (:slant italic
-               :inherit font-lock-doc-face)))
+  `((t ,(list
+         :slant 'italic
+         :inherit 'font-lock-doc-face)))
   "Face to use for extracted comments.")
 
 (defface po-plus-reference-face
-  '((t (:inherit link
-                 :height 0.7)))
+  `((t ,(list
+         :inherit 'link
+         :height 0.7)))
   "Face to use for code references.")
 
 (defface po-plus-msgctxt-face
-  '((t (:inherit homoglyph
-                    :height 0.9)))
+  `((t ,(list
+         :inherit 'homoglyph
+         :height 0.9)))
   "Face to use for msgctxt.")
 
 (defface po-plus-msgid-face
-  '((t (:foreground "burlywood"
-                    :height 0.9)))
+  `((t ,(list
+         :foreground "burlywood"
+         :height 0.9)))
   "Face to use for msgid.")
 
 (defface po-plus-msgid-plural-face
-  '((t (:inherit po-plus-msgid-face)))
+  `((t ,(list
+         :inherit 'po-plus-msgid-face)))
   "Face to use for the plural form of msgid.")
 
 (defface po-plus-msgstr-face
@@ -83,19 +89,22 @@
   "Face to use for msgstr.")
 
 (defface po-plus-empty-msgid-face
-  '((t (:inherit font-lock-keyword-face)))
+  `((t ,(list
+         :inherit 'font-lock-keyword-face)))
   "Face to use for empty msgid.")
 
 (defface po-plus-flag-face
-  '((t (:slant normal
-        :box t
-        :inherit font-lock-keyword-face)))
+  `((t ,(list
+         :slant 'normal
+         :box t
+         :inherit 'font-lock-keyword-face)))
   "Face to use for flags.")
 
 (defface po-plus-divider-face
-  '((t (:underline t
-                   :extend t
-                   :inherit shadow)))
+  `((t ,(list
+         :underline t
+         :extend t
+         :inherit 'shadow)))
   "Face to use for dividers.")
 
 (cl-defstruct po-plus-entry
@@ -214,15 +223,16 @@
 If optional argument INDEX is a number, jumps to the next string
 with that plural index."
   (interactive)
-  (let ((match (text-property-search-forward 'po-plus-is-msgstr t
-                                             (lambda (expected actual)
-                                               (and
-                                                (eq expected actual)
-                                                (eq (if (eq index nil)
-                                                        nil
-                                                      (get-text-property (point) 'po-plus-plural-index))
-                                                    index)))
-                                             t)))
+  (let ((match (text-property-search-forward
+                'po-plus-is-msgstr t
+                (lambda (expected actual)
+                  (and
+                   (eq expected actual)
+                   (eq (if (eq index nil)
+                           nil
+                         (get-text-property (point) 'po-plus-plural-index))
+                       index)))
+                t)))
     (unless match
       (user-error "No next entry"))
     (let ((start (prop-match-beginning match))
@@ -237,15 +247,16 @@ with that plural index."
 Behavior is otherwise the same as
 `po-plus-jump-to-next-editable-string'."
   (interactive)
-  (let ((match (text-property-search-backward 'po-plus-is-msgstr t
-                                             (lambda (expected actual)
-                                               (and
-                                                (eq expected actual)
-                                                (eq (if (eq index nil)
-                                                        nil
-                                                      (get-text-property (point) 'po-plus-plural-index))
-                                                    index)))
-                                             t)))
+  (let ((match (text-property-search-backward
+                'po-plus-is-msgstr t
+                (lambda (expected actual)
+                  (and
+                   (eq expected actual)
+                   (eq (if (eq index nil)
+                           nil
+                         (get-text-property (point) 'po-plus-plural-index))
+                       index)))
+                t)))
     (unless match
       (user-error "No previous entry"))
     (let ((start (prop-match-beginning match))
@@ -437,7 +448,6 @@ Behavior is otherwise the same as
                     ""
                   "\\n")
                 "\"\n")))))
-
 
 (defun po-plus-write-entries (entries)
   (dolist (entry entries)
@@ -697,7 +707,7 @@ Behavior is otherwise the same as
     (save-excursion
       (goto-char (point-min))
       (while-let ((match (text-property-search-forward
-                           'po-plus-is-msgid t t t)))
+                          'po-plus-is-msgid t t t)))
         (let* ((beg (prop-match-beginning match))
                (end (prop-match-end match))
                (msgid (buffer-substring-no-properties beg end)))
