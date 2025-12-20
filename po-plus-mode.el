@@ -115,14 +115,13 @@
   source-buffer)
 
 (cl-defstruct po-plus-buffer-data
-  source-file
   entries)
 
 (defun po-plus-revert-buffer (ignore-auto noconfirm)
   (unless po-plus--buffer-data
     (user-error "This may not be a PO+ buffer"))
   (let ((pos (point))
-        (source-file (po-plus-buffer-data-source-file po-plus--buffer-data))
+        (source-file buffer-file-name)
         (buffer-data po-plus--buffer-data))
     (with-temp-buffer
       (insert-file-contents (expand-file-name source-file))
@@ -490,12 +489,13 @@ Behavior is otherwise the same as
   (interactive)
   (unless (po-plus-buffer-data-entries po-plus--buffer-data)
     (user-error "Buffer has no PO entries"))
-  (let ((file (or (po-plus-buffer-data-source-file po-plus--buffer-data)
-                  (read-file-name "No source-file set, choose where to save: ")))
+  (let ((file (or buffer-file-name
+                  (read-file-name "No source file set, choose where to save: ")))
         (entries (po-plus-buffer-data-entries po-plus--buffer-data)))
     (with-temp-buffer
       (po-plus-write-entries entries)
-      (write-file file))))
+      (write-file file))
+    (set-buffer-modified-p nil)))
 
 (defun po-plus-open ()
   (interactive)
@@ -510,10 +510,10 @@ Behavior is otherwise the same as
         (switch-to-buffer (get-buffer buf-name))
       (switch-to-buffer (get-buffer-create buf-name))
       (po-plus-mode)
+      (setq-local buffer-file-name source-file)
       (setq-local po-plus--buffer-data
                   (make-po-plus-buffer-data
-                   :entries (po-plus-parse-buffer source-buffer)
-                   :source-file source-file))
+                   :entries (po-plus-parse-buffer source-buffer)))
       (po-plus--insert-all-entries (po-plus-buffer-data-entries po-plus--buffer-data)))))
 
 (defun po-plus--insert-all-entries (entries)
