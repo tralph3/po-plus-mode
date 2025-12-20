@@ -3,9 +3,9 @@
 ;; Authors: Tomás Ralph <tomasralph2000@gmail.com>
 ;; Created: 2025
 ;; Version: 0.1
-;; Package-Requires: ((emacs "24.4"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Homepage: https://github.com/tralph3/po-plus-mode
-;; Keywords: po tool
+;; Keywords: convenience files i18n
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -34,8 +34,9 @@
     (define-key map (kbd "RET") #'po-plus-edit-string)
     (define-key map (kbd "n") #'po-plus-jump-to-next-editable-string)
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
-    (define-key map (kbd "g") #'revert-buffer)
-    map)
+    (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
+    (define-key map (kbd "U") #'po-plus-jump-to-prev-untranslated)
+    (define-key map (kbd "g") #'revert-buffer))
   "Keymap for `po-plus-mode'.")
 
 (defvar po-plus-edit-mode-map
@@ -185,9 +186,9 @@
 
 (defun po-plus-edit-string ()
   (interactive)
-  (let ((editable (get-text-property (point) 'editable-string))
+  (let ((editable (get-text-property (point) 'po-plus-is-msgstr))
         (entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'plural-index)))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (unless editable
       (user-error "No editable string here"))
 
@@ -213,13 +214,13 @@
 If optional argument INDEX is a number, jumps to the next string
 with that plural index."
   (interactive)
-  (let ((match (text-property-search-forward 'editable-string t
+  (let ((match (text-property-search-forward 'po-plus-is-msgstr t
                                              (lambda (expected actual)
                                                (and
                                                 (eq expected actual)
                                                 (eq (if (eq index nil)
                                                         nil
-                                                      (get-text-property (point) 'plural-index))
+                                                      (get-text-property (point) 'po-plus-plural-index))
                                                     index)))
                                              t)))
     (unless match
@@ -236,19 +237,41 @@ with that plural index."
 Behavior is otherwise the same as
 `po-plus-jump-to-next-editable-string'."
   (interactive)
-  (let ((match (text-property-search-backward 'editable-string t
+  (let ((match (text-property-search-backward 'po-plus-is-msgstr t
                                              (lambda (expected actual)
                                                (and
                                                 (eq expected actual)
                                                 (eq (if (eq index nil)
                                                         nil
-                                                      (get-text-property (point) 'plural-index))
+                                                      (get-text-property (point) 'po-plus-plural-index))
                                                     index)))
                                              t)))
     (unless match
       (user-error "No previous entry"))
     (let ((start (prop-match-beginning match))
           (end   (prop-match-end match)))
+      (goto-char start)
+      (pulse-momentary-highlight-region start end)
+      (recenter))))
+
+(defun po-plus-jump-to-next-untranslated ()
+  (interactive)
+  (let ((match (text-property-search-forward 'po-plus-is-untranslated t t t)))
+    (unless match
+      (user-error "No untranslated entries!"))
+    (let ((start (prop-match-beginning match))
+          (end (prop-match-end match)))
+      (goto-char start)
+      (pulse-momentary-highlight-region start end)
+      (recenter))))
+
+(defun po-plus-jump-to-prev-untranslated ()
+  (interactive)
+  (let ((match (text-property-search-backward 'po-plus-is-untranslated t t t)))
+    (unless match
+      (user-error "No untranslated entries!"))
+    (let ((start (prop-match-beginning match))
+          (end (prop-match-end match)))
       (goto-char start)
       (pulse-momentary-highlight-region start end)
       (recenter))))
@@ -519,15 +542,17 @@ Behavior is otherwise the same as
 (defun po-plus--insert-all-entries (entries)
   (dolist (entry entries)
     (po-plus--insert-entry entry)
-    (insert "\n")
+    (insert "\n\n\n\n")
     (goto-char (point-max)))
-  (goto-char (point-min)))
+  (goto-char (point-min))
+  (set-buffer-modified-p nil))
 
 (defun po-plus--insert-translator-comments (comments)
   (dolist (comment (reverse comments))
     (insert (propertize comment
                         'rear-sticky nil
                         'front-sticky nil
+                        'po-plus-is-translator-comment t
                         'face 'po-plus-translator-comments-face) "\n")))
 
 (defun po-plus--insert-extracted-comments (comments)
@@ -535,12 +560,14 @@ Behavior is otherwise the same as
     (insert (propertize comment
                         'rear-sticky nil
                         'front-sticky nil
+                        'po-plus-is-extracted-comment t
                         'face 'po-plus-extracted-comments-face) "\n")))
 
 (defun po-plus--insert-msgctxt (msgctxt)
   (insert (propertize msgctxt
                       'rear-sticky nil
                       'front-sticky nil
+                      'po-plus-is-msgctxt t
                       'face 'po-plus-msgctxt-face) "\n"))
 
 (defun po-plus--insert-msgid (msgid)
@@ -548,6 +575,7 @@ Behavior is otherwise the same as
                       'line-prefix "• "
                       'rear-sticky nil
                       'front-sticky nil
+                      'po-plus-is-msgid t
                       'face 'po-plus-msgid-face) "\n"))
 
 (defun po-plus--insert-msgid-plural (msgid-plural)
@@ -555,28 +583,31 @@ Behavior is otherwise the same as
                       'line-prefix "→ "
                       'rear-sticky nil
                       'front-sticky nil
+                      'po-plus-is-msgid-plural t
                       'face 'po-plus-msgid-plural-face) "\n"))
 
 (defun po-plus--insert-msgstr-as-string (msgstr)
-  (let ((empty (string= msgstr "")))
-    (insert (propertize (if empty po-plus-empty-string-message msgstr)
+  (let ((is-empty (string= msgstr "")))
+    (insert (propertize (if is-empty po-plus-empty-string-message msgstr)
                         'line-prefix "→ "
                         'rear-sticky nil
                         'front-sticky nil
-                        'editable-string t
-                        'face (if empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n")))
+                        'po-plus-is-msgstr t
+                        'po-plus-is-untranslated is-empty
+                        'face (if is-empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n")))
 
 (defun po-plus--insert-msgstr-as-vector (msgstr)
   (dotimes (i (length msgstr))
     (let* ((str (aref msgstr i))
-           (empty (string= str "")))
-      (insert (propertize (if empty po-plus-empty-string-message str)
+           (is-empty (string= str "")))
+      (insert (propertize (if is-empty po-plus-empty-string-message str)
                           'line-prefix (format "[%d] → " i)
                           'rear-sticky nil
                           'front-sticky nil
-                          'editable-string t
-                          'plural-index i
-                          'face (if empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n"))))
+                          'po-plus-is-msgstr t
+                          'po-plus-plural-index i
+                          'po-plus-is-untranslated is-empty
+                          'face (if is-empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n"))))
 
 (defun po-plus--insert-references (references)
   (setq references (reverse references))
@@ -665,10 +696,12 @@ Behavior is otherwise the same as
   (let (index)
     (save-excursion
       (goto-char (point-min))
-      (while (re-search-forward "^ID: \\(.*\\)$" nil t)
-        (let ((msgid (match-string 1))
-              (pos (match-beginning 0)))
-          (push (cons msgid pos) index))))
+      (while-let ((match (text-property-search-forward
+                           'po-plus-is-msgid t t t)))
+        (let* ((beg (prop-match-beginning match))
+               (end (prop-match-end match))
+               (msgid (buffer-substring-no-properties beg end)))
+          (push (cons msgid beg) index))))
     (nreverse index)))
 
 ;;;###autoload
