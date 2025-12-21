@@ -666,8 +666,6 @@ Behavior is otherwise the same as
                       'front-sticky nil
                       'face 'po-plus-divider-face)))
 
-
-
 (defun po-plus--insert-entry (entry)
   (let ((beg (point))
         (msgid (po-plus-entry-msgid entry)))
@@ -691,18 +689,24 @@ Behavior is otherwise the same as
       (when (po-plus-entry-references entry)
         (po-plus--insert-references (po-plus-entry-references entry)))
       (po-plus--insert-divider))
-    (add-text-properties beg (point) `(entry ,entry
-                                             'rear-sticky nil
-                                             'front-sticky nil))))
+    (add-text-properties beg (point) (list
+                                      'entry entry
+                                      'rear-sticky nil
+                                      'front-sticky nil))))
 
 (defun po-plus--insert-header (header)
-  (dolist (i (number-sequence 0 (- (length header) 2) 2))
-    (let* ((key (nth i header))
-           (val (nth (1+ i) header)))
-      (insert (format "%s %s\n"
-                      (propertize (symbol-name key)
-                                  'face '(:box t))
-                      val)))))
+  (let ((beg (point)))
+    (dolist (i (number-sequence 0 (- (length header) 2) 2))
+      (let* ((key (nth i header))
+             (val (nth (1+ i) header)))
+        (insert (format "%s %s\n"
+                        (propertize (substring (symbol-name key) 1)
+                                    'face '(:box t))
+                        val))))
+    (add-text-properties beg (point) (list
+                                      'header header
+                                      'rear-sticky nil
+                                      'front-sticky nil))))
 
 (defun po-plus-imenu-index ()
   "Return an index alist of PO entries for `imenu'."
