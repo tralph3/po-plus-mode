@@ -132,19 +132,25 @@ position."
   source-buffer)
 
 (cl-defstruct po-plus-buffer-data
+  source-file
+  header
   entries)
 
 (defun po-plus-revert-buffer (ignore-auto noconfirm)
   (unless po-plus--buffer-data
     (user-error "This may not be a PO+ buffer"))
-  (let ((pos (point))
-        (source-file buffer-file-name)
-        (buffer-data po-plus--buffer-data))
+  (let* ((pos (point))
+         (buffer-data po-plus--buffer-data)
+         (source-file (po-plus-buffer-data-source-file buffer-data))
+         new-data)
     (with-temp-buffer
       (insert-file-contents (expand-file-name source-file))
-      (setf (po-plus-buffer-data-entries buffer-data) (po-plus-parse-buffer)))
+      (setq new-data (po-plus-parse-buffer))
+      (setf (po-plus-buffer-data-source-file new-data) source-file))
+    (setq po-plus--buffer-data new-data)
     (let ((inhibit-read-only t))
       (erase-buffer)
+      (po-plus--insert-header (po-plus-buffer-data-header po-plus--buffer-data))
       (po-plus--insert-all-entries (po-plus-buffer-data-entries po-plus--buffer-data))
       (goto-char pos)
       (recenter))))
@@ -336,11 +342,6 @@ Behavior is otherwise the same as
         (setq header-plist (plist-put header-plist (intern key) val))))
     header-plist))
 
-(defun po-plus-parse-file (file)
-  (with-temp-buffer
-    (insert-file-contents file)
-    (po-plus-parse-buffer)))
-
 (defun po-plus-parse-buffer (&optional buffer)
   (unless buffer
     (setq buffer (current-buffer)))
@@ -349,7 +350,7 @@ Behavior is otherwise the same as
       (goto-char (point-min))
       ;; ensures blank lines match ""
       (delete-trailing-whitespace (point-min) (point-max))
-      (let (entries
+      (let ((buffer-data (make-po-plus-buffer-data))
             current
             current-field
             string-accumulator
@@ -385,35 +386,41 @@ Behavior is otherwise the same as
               (push (match-string 1 line)
                     (po-plus-entry-previous-untranslated current)))
 
-             ((string-match "^#~ \\(.*\\)" line)
-              (push (match-string 1 line)
-                    (po-plus-entry-obsolete current)))
-
-             ((string-match "^msgid \"\\(.*\\)\"" line)
+             ((string-match "^\\(#~ \\)?msgid \"\\(.*\\)\"" line)
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when (match-string 1 line)
+                (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgid
-                    string-accumulator (match-string 1 line)))
-
-             ((string-match "^msgid_plural \"\\(.*\\)\"" line)
-              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (setq current-field :msgid-plural
-                    string-accumulator (match-string 1 line)))
-
-             ((string-match "^msgstr \"\\(.*\\)\"" line)
-              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (setq current-field :msgstr
-                    string-accumulator (match-string 1 line)))
-
-             ((string-match "^msgstr\\[\\([0-9]+\\)\\] \"\\(.*\\)\"" line)
-              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (setq current-field :msgstr-plural
-                    current-msgstr-index (string-to-number (match-string 1 line))
                     string-accumulator (match-string 2 line)))
 
-             ((string-match "^msgctxt \"\\(.*\\)\"" line)
+             ((string-match "^\\(#~ \\)?msgid_plural \"\\(.*\\)\"" line)
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when (match-string 1 line)
+                (setf (po-plus-entry-obsolete current) t))
+              (setq current-field :msgid-plural
+                    string-accumulator (match-string 2 line)))
+
+             ((string-match "^\\(#~ \\)?msgstr \"\\(.*\\)\"" line)
+              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when (match-string 1 line)
+                (setf (po-plus-entry-obsolete current) t))
+              (setq current-field :msgstr
+                    string-accumulator (match-string 2 line)))
+
+             ((string-match "^\\(#~ \\)?msgstr\\[\\([0-9]+\\)\\] \"\\(.*\\)\"" line)
+              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when (match-string 1 line)
+                (setf (po-plus-entry-obsolete current) t))
+              (setq current-field :msgstr-plural
+                    current-msgstr-index (string-to-number (match-string 2 line))
+                    string-accumulator (match-string 3 line)))
+
+             ((string-match "^\\(#~ \\)?msgctxt \"\\(.*\\)\"" line)
+              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when (match-string 1 line)
+                (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgctxt
-                    string-accumulator (match-string 1 line)))
+                    string-accumulator (match-string 2 line)))
 
              ((and current-field
                    (string-match "^\"\\(.*\\)\"" line))
@@ -426,7 +433,9 @@ Behavior is otherwise the same as
                 (setq current-field nil
                       string-accumulator nil)
                 (when (po-plus-entry-msgid current)
-                  (push current entries)
+                  (if (string= (po-plus-entry-msgid current) "")
+                      (setf (po-plus-buffer-data-header buffer-data) current)
+                    (push current (po-plus-buffer-data-entries buffer-data)))
                   (setq current nil))))
 
              (t
@@ -439,8 +448,12 @@ Behavior is otherwise the same as
                current
                (po-plus-entry-msgid current))
           (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-          (push current entries))
-        (nreverse entries)))))
+          (if (string= (po-plus-entry-msgid current) "")
+              (setf (po-plus-buffer-data-header buffer-data) current)
+            (push current (po-plus-buffer-data-entries buffer-data)))
+        (setf (po-plus-buffer-data-entries buffer-data)
+              (nreverse (po-plus-buffer-data-entries buffer-data)))
+        buffer-data)))))
 
 (defun po-plus-unescape-string (s)
   "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
@@ -476,22 +489,30 @@ Behavior is otherwise the same as
       (insert (format "#| %s\n" previous-untranslated)))
     (dolist (reference (reverse (po-plus-entry-references entry)))
       (insert (format "#: %s\n" reference)))
-    (dolist (obsolete (reverse (po-plus-entry-obsolete entry)))
-      (insert (format "#~ %s\n" obsolete)))
     (when (po-plus-entry-msgctxt entry)
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
       (insert "msgctxt ")
       (po-plus--insert-maybe-multiline-string (po-plus-entry-msgctxt entry)))
+    (when (po-plus-entry-obsolete entry)
+      (insert "#~ "))
     (insert "msgid ")
     (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid entry))
     (when (po-plus-entry-msgid-plural entry)
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
       (insert "msgid_plural ")
       (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid-plural entry)))
     (cond
      ((stringp (po-plus-entry-msgstr entry))
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
       (insert "msgstr ")
       (po-plus--insert-maybe-multiline-string (po-plus-entry-msgstr entry)))
      ((vectorp (po-plus-entry-msgstr entry))
       (dotimes (i (length (po-plus-entry-msgstr entry)))
+        (when (po-plus-entry-obsolete entry)
+          (insert "#~ "))
         (insert (format "msgstr[%d] " i))
         (po-plus--insert-maybe-multiline-string (aref (po-plus-entry-msgstr entry) i)))))
     (insert "\n"))
@@ -538,7 +559,7 @@ Behavior is otherwise the same as
   (interactive)
   (unless (po-plus-buffer-data-entries po-plus--buffer-data)
     (user-error "Buffer has no PO entries"))
-  (let ((file (or buffer-file-name
+  (let ((file (or (po-plus-buffer-data-source-file po-plus--buffer-data)
                   (read-file-name "No source file set, choose where to save: ")))
         (entries (po-plus-buffer-data-entries po-plus--buffer-data)))
     (with-temp-buffer
@@ -548,8 +569,7 @@ Behavior is otherwise the same as
 
 (defun po-plus-open ()
   (interactive)
-  (when (not (string= "po"
-                      (file-name-extension (or buffer-file-name ""))))
+  (when (not (string= "po" (file-name-extension (or buffer-file-name ""))))
     (user-error "This is likely not a PO file. Aborting"))
   (let ((buf-name (format "PO+ %s" (buffer-name)))
         (source-buffer (current-buffer))
@@ -559,17 +579,15 @@ Behavior is otherwise the same as
         (switch-to-buffer (get-buffer buf-name))
       (switch-to-buffer (get-buffer-create buf-name))
       (po-plus-mode)
-      (setq-local buffer-file-name source-file)
-      (setq-local po-plus--buffer-data
-                  (make-po-plus-buffer-data
-                   :entries (po-plus-parse-buffer source-buffer)))
+      (setq-local po-plus--buffer-data (po-plus-parse-buffer source-buffer))
+      (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
+      (po-plus--insert-header (po-plus-buffer-data-header po-plus--buffer-data))
       (po-plus--insert-all-entries (po-plus-buffer-data-entries po-plus--buffer-data)))))
 
 (defun po-plus--insert-all-entries (entries)
   (dolist (entry entries)
     (po-plus--insert-entry entry)
-    (insert "\n\n\n\n")
-    (goto-char (point-max)))
+    (insert "\n\n"))
   (goto-char (point-min))
   (set-buffer-modified-p nil))
 
@@ -684,42 +702,39 @@ Behavior is otherwise the same as
 (defun po-plus--insert-entry (entry)
   (let ((beg (point))
         (msgid (po-plus-entry-msgid entry)))
-    (if (string= msgid "")
-        (progn
-          (goto-char (point-min))
-          (setq beg (point-min))
-          (po-plus--insert-header (po-plus-parse-header (po-plus-entry-msgstr entry))))
-      (when (po-plus-entry-flags entry)
-        (po-plus--insert-flags (po-plus-entry-flags entry)))
-      (when (po-plus-entry-translator-comments entry)
-        (po-plus--insert-translator-comments (po-plus-entry-translator-comments entry)))
-      (when (po-plus-entry-extracted-comments entry)
-        (po-plus--insert-extracted-comments (po-plus-entry-extracted-comments entry)))
-      (when (po-plus-entry-msgctxt entry)
-        (po-plus--insert-msgctxt (po-plus-entry-msgctxt entry)))
-      (po-plus--insert-msgid msgid)
-      (when (po-plus-entry-msgid-plural entry)
-        (po-plus--insert-msgid-plural (po-plus-entry-msgid-plural entry)))
-      (po-plus--insert-msgstr (po-plus-entry-msgstr entry))
-      (when (po-plus-entry-references entry)
-        (po-plus--insert-references (po-plus-entry-references entry)))
-      (po-plus--insert-divider))
+    (when (po-plus-entry-flags entry)
+      (po-plus--insert-flags (po-plus-entry-flags entry)))
+    (when (po-plus-entry-translator-comments entry)
+      (po-plus--insert-translator-comments (po-plus-entry-translator-comments entry)))
+    (when (po-plus-entry-extracted-comments entry)
+      (po-plus--insert-extracted-comments (po-plus-entry-extracted-comments entry)))
+    (when (po-plus-entry-msgctxt entry)
+      (po-plus--insert-msgctxt (po-plus-entry-msgctxt entry)))
+    (po-plus--insert-msgid msgid)
+    (when (po-plus-entry-msgid-plural entry)
+      (po-plus--insert-msgid-plural (po-plus-entry-msgid-plural entry)))
+    (po-plus--insert-msgstr (po-plus-entry-msgstr entry))
+    (when (po-plus-entry-references entry)
+      (po-plus--insert-references (po-plus-entry-references entry)))
+    (po-plus--insert-divider)
     (add-text-properties beg (point) (list
                                       'entry entry
                                       'rear-sticky nil
                                       'front-sticky nil))))
 
 (defun po-plus--insert-header (header)
-  (let ((beg (point)))
-    (dolist (i (number-sequence 0 (- (length header) 2) 2))
-      (let* ((key (nth i header))
-             (val (nth (1+ i) header)))
+  (let ((beg (point))
+        (parsed-header (po-plus-parse-header (po-plus-entry-msgstr header))))
+    (dolist (i (number-sequence 0 (- (length parsed-header) 2) 2))
+      (let* ((key (nth i parsed-header))
+             (val (nth (1+ i) parsed-header)))
         (insert (format "%s %s\n"
                         (propertize (substring (symbol-name key) 1)
                                     'face '(:box t))
                         val))))
     (add-text-properties beg (point) (list
                                       'header header
+                                      'parsed-header parsed-header
                                       'rear-sticky nil
                                       'front-sticky nil))))
 
