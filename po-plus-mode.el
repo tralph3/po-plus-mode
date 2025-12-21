@@ -52,6 +52,11 @@
   "Message to be displayed when a string has not yet been translated."
   :type 'string)
 
+(defcustom po-plus-highlight-on-jump t
+  "Wether to highlight a section of text whenever the cursor jumps to a new
+position."
+  :type 'boolean)
+
 (defface po-plus-translator-comments-face
   `((t ,(list
          :inherit 'font-lock-comment-face)))
@@ -244,7 +249,8 @@ with that plural index."
     (let ((start (prop-match-beginning match))
           (end   (prop-match-end match)))
       (goto-char start)
-      (pulse-momentary-highlight-region start end)
+      (when po-plus-highlight-on-jump
+        (pulse-momentary-highlight-region start end))
       (recenter))))
 
 (defun po-plus-jump-to-prev-editable-string (&optional index)
@@ -268,7 +274,8 @@ Behavior is otherwise the same as
     (let ((start (prop-match-beginning match))
           (end   (prop-match-end match)))
       (goto-char start)
-      (pulse-momentary-highlight-region start end)
+      (when po-plus-highlight-on-jump
+        (pulse-momentary-highlight-region start end))
       (recenter))))
 
 (defun po-plus-jump-to-next-untranslated ()
@@ -279,7 +286,8 @@ Behavior is otherwise the same as
     (let ((start (prop-match-beginning match))
           (end (prop-match-end match)))
       (goto-char start)
-      (pulse-momentary-highlight-region start end)
+      (when po-plus-highlight-on-jump
+        (pulse-momentary-highlight-region start end))
       (recenter))))
 
 (defun po-plus-jump-to-prev-untranslated ()
@@ -290,7 +298,8 @@ Behavior is otherwise the same as
     (let ((start (prop-match-beginning match))
           (end (prop-match-end match)))
       (goto-char start)
-      (pulse-momentary-highlight-region start end)
+      (when po-plus-highlight-on-jump
+        (pulse-momentary-highlight-region start end))
       (recenter))))
 
 (defun po-plus--flush-field (current field acc &optional index)
@@ -510,17 +519,18 @@ Behavior is otherwise the same as
                   (max (string-to-number (or (cadr lines) "")) start))))
       (when (not (and (= start 0) (= end 0)))
         (goto-line start)
-        (if (eq start end)
-            (pulse-momentary-highlight-one-line)
-          (pulse-momentary-highlight-region
-           (save-excursion
-             (goto-line start)
-             (move-to-column 0)
-             (point))
-           (save-excursion
-             (goto-line end)
-             (move-to-column 0)
-             (point)))))
+        (when po-plus-highlight-on-jump
+          (if (eq start end)
+              (pulse-momentary-highlight-one-line)
+            (pulse-momentary-highlight-region
+             (save-excursion
+               (goto-line start)
+               (move-to-column 0)
+               (point))
+             (save-excursion
+               (goto-line end)
+               (move-to-column 0)
+               (point))))))
       (when column
         (move-to-column (string-to-number column))))))
 
