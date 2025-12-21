@@ -36,6 +36,8 @@
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
     (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
     (define-key map (kbd "U") #'po-plus-jump-to-prev-untranslated)
+    (define-key map (kbd "f") #'po-plus-jump-to-next-fuzzy)
+    (define-key map (kbd "F") #'po-plus-jump-to-prev-fuzzy)
     (define-key map (kbd "k") #'po-plus-kill-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
     map)
@@ -307,22 +309,50 @@ Behavior is otherwise the same as
         (pulse-momentary-highlight-region start end))
       (recenter))))
 
+(defun po-plus-jump-to-next-fuzzy ()
+  (interactive)
+  (let (found-pos match)
+    (save-excursion
+      (while (and (not found-pos)
+                  (setq match (text-property-search-forward 'entry nil nil t)))
+        (when (po-plus--is-entry-fuzzy
+               (get-text-property (prop-match-beginning match) 'entry))
+          (setq found-pos (prop-match-beginning match)))))
+    (unless found-pos
+      (user-error "No fuzzy entries!"))
+    (goto-char found-pos)
+    (po-plus-jump-to-next-editable-string)))
+
+(defun po-plus-jump-to-prev-fuzzy ()
+  (interactive)
+  (let (found-pos match)
+    (save-excursion
+      (while (and (not found-pos)
+                  (setq match (text-property-search-backward 'entry nil nil t)))
+        (when (po-plus--is-entry-fuzzy
+               (get-text-property (prop-match-beginning match) 'entry))
+          (setq found-pos (prop-match-beginning match)))))
+    (unless found-pos
+      (user-error "No fuzzy entries!"))
+    (goto-char found-pos)
+    (po-plus-jump-to-next-editable-string)))
+
+(defun po-plus--is-entry-fuzzy (entry)
+  (let ((flags (po-plus-entry-flags entry)))
+    (not (not (member "fuzzy" flags)))))
+
 (defun po-plus--flush-field (current field acc &optional index)
   (when (and current field)
     (setq acc (po-plus-unescape-string acc))
     (pcase field
       (:msgid
        (setf (po-plus-entry-msgid current) acc))
-
       (:msgid-plural
        (setf (po-plus-entry-msgid-plural current) acc))
-
       (:msgctxt
        (setf (po-plus-entry-msgctxt current) acc))
-
       (:msgstr
        (setf (po-plus-entry-msgstr current) acc))
-
       (:msgstr-plural
        (let ((vec (or (po-plus-entry-msgstr current)
                       (make-vector (1+ index) nil))))
