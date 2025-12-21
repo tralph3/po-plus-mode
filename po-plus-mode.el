@@ -156,7 +156,8 @@ position."
     (let ((inhibit-read-only t))
       (erase-buffer)
       (po-plus--insert-buffer-data po-plus--buffer-data)
-      (goto-line line)
+      (goto-char (point-min))
+      (forward-line (1- line))
       (move-to-column column)
       (recenter))))
 
@@ -355,7 +356,8 @@ Behavior is otherwise the same as
     (po-plus--refresh-entry entry)
     (when (= (length (po-plus-entry-flags entry)) 0)
       (setq line (max (1- line) 0)))
-    (goto-line line)
+    (goto-char (point-min))
+    (forward-line (1- line))
     (move-to-column column)))
 
 (defun po-plus-fuzzy-entry-at-point ()
@@ -371,7 +373,8 @@ Behavior is otherwise the same as
     (po-plus--refresh-entry entry)
     (when (= (length (po-plus-entry-flags entry)) 1)
       (setq line (max (1+ line) 0)))
-    (goto-line line)
+    (goto-char (point-min))
+    (forward-line (1- line))
     (move-to-column column)))
 
 (defun po-plus--is-entry-fuzzy (entry)
@@ -517,9 +520,9 @@ Behavior is otherwise the same as
           (if (string= (po-plus-entry-msgid current) "")
               (setf (po-plus-buffer-data-header buffer-data) current)
             (push current (po-plus-buffer-data-entries buffer-data)))
-        (setf (po-plus-buffer-data-entries buffer-data)
-              (nreverse (po-plus-buffer-data-entries buffer-data)))
-        buffer-data)))))
+          (setf (po-plus-buffer-data-entries buffer-data)
+                (nreverse (po-plus-buffer-data-entries buffer-data)))
+          buffer-data)))))
 
 (defun po-plus-unescape-string (s)
   "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
@@ -605,17 +608,20 @@ Behavior is otherwise the same as
                     (line-number-at-pos (point-max))
                   (max (string-to-number (or (cadr lines) "")) start))))
       (when (not (and (= start 0) (= end 0)))
-        (goto-line start)
+        (goto-char (point-min))
+        (forward-line (1- start))
         (when po-plus-highlight-on-jump
           (if (eq start end)
               (pulse-momentary-highlight-one-line)
             (pulse-momentary-highlight-region
              (save-excursion
-               (goto-line start)
+               (goto-char (point-min))
+               (forward-line (1- start))
                (move-to-column 0)
                (point))
              (save-excursion
-               (goto-line end)
+               (goto-char (point-min))
+               (forward-line (1- end))
                (move-to-column 0)
                (point))))))
       (when column
