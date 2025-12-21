@@ -635,7 +635,9 @@ Behavior is otherwise the same as
                                   map)
                         'help-echo "Visit reference")
             (if (< i (1- (length references)))
-                (propertize "|" 'face 'shadow)
+                (propertize "|" 'face (list
+                                       :inherit '(shadow po-plus-reference-face)
+                                       :underline nil))
               "")))
   (insert "\n"))
 
