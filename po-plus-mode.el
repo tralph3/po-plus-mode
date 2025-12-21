@@ -725,12 +725,7 @@ Behavior is otherwise the same as
   (setq-local imenu-create-index-function #'po-plus-imenu-index))
 
 (define-derived-mode po-plus-edit-mode text-mode "PO+ Edit"
-  "Edit a single PO translation."
-  (setq-local header-line-format
-              (format
-               "Edit translation — %s to save, %s to cancel"
-               (propertize "C-c C-c" 'face '(:box t))
-               (propertize "C-c C-k" 'face '(:box t)))))
+  "Edit a single PO translation.")
 
 (provide 'po-plus-mode)
 
