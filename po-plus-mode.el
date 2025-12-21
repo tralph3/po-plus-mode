@@ -36,7 +36,8 @@
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
     (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
     (define-key map (kbd "U") #'po-plus-jump-to-prev-untranslated)
-    (define-key map (kbd "g") #'revert-buffer))
+    (define-key map (kbd "g") #'revert-buffer)
+    map)
   "Keymap for `po-plus-mode'.")
 
 (defvar po-plus-edit-mode-map
