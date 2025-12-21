@@ -36,6 +36,7 @@
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
     (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
     (define-key map (kbd "U") #'po-plus-jump-to-prev-untranslated)
+    (define-key map (kbd "k") #'po-plus-kill-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
     map)
   "Keymap for `po-plus-mode'.")
@@ -157,7 +158,19 @@
        (setf (po-plus-entry-msgstr ,entry) ,value)
      (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
 
-(defun po-plus--refresh-entry-msgstr (entry)
+(defun po-plus-kill-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (kill-new (po-plus-entry-msgstr-with-index entry plural-index))
+    (setf (po-plus-entry-msgstr-with-index entry plural-index) "")
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t))
+
+(defun po-plus--refresh-entry (entry)
   (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
     (unless (memq entry entries)
       (error "Entry not found in entries list."))
@@ -178,45 +191,37 @@
   (let* ((session po-plus--edit-session)
          (entry (po-plus-edit-session-entry session))
          (source-buffer (po-plus-edit-session-source-buffer session))
-         (text (buffer-string)))
-
-    (let* ((data (buffer-local-value 'po-plus--buffer-data source-buffer))
-           (entries (po-plus-buffer-data-entries data))
-           (idx (po-plus-edit-session-plural-index session)))
-      (setf (po-plus-entry-msgstr-with-index entry idx) text))
-
+         (data (buffer-local-value 'po-plus--buffer-data source-buffer))
+         (idx (po-plus-edit-session-plural-index session)))
+    (setf (po-plus-entry-msgstr-with-index entry idx) (buffer-string))
     (if (one-window-p)
         (kill-buffer)
       (kill-buffer-and-window))
-
     (switch-to-buffer source-buffer)
-    (po-plus--refresh-entry-msgstr entry)
+    (po-plus--refresh-entry entry)
     (po-plus-jump-to-next-editable-string (po-plus-edit-session-plural-index session))
     (set-buffer-modified-p t)))
 
 (defun po-plus-edit-string ()
   (interactive)
-  (let ((editable (get-text-property (point) 'po-plus-is-msgstr))
-        (entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'po-plus-plural-index)))
-    (unless editable
-      (user-error "No editable string here"))
-
-    (let* ((source-buffer (current-buffer))
-           (buf (get-buffer-create "*PO+ Edit*"))
-           (text (po-plus-entry-msgstr-with-index entry plural-index)))
-      (with-current-buffer buf
-        (erase-buffer)
-        (insert text)
-        (goto-char (point-min))
-        (po-plus-edit-mode)
-
-        (setq-local po-plus--edit-session
-                    (make-po-plus-edit-session
-                     :entry entry
-                     :plural-index plural-index
-                     :source-buffer source-buffer)))
-      (pop-to-buffer buf))))
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let* ((entry (get-text-property (point) 'entry))
+         (plural-index (get-text-property (point) 'po-plus-plural-index))
+         (source-buffer (current-buffer))
+         (buf (get-buffer-create "*PO+ Edit*"))
+         (text (po-plus-entry-msgstr-with-index entry plural-index)))
+    (with-current-buffer buf
+      (erase-buffer)
+      (insert text)
+      (goto-char (point-min))
+      (po-plus-edit-mode)
+      (setq-local po-plus--edit-session
+                  (make-po-plus-edit-session
+                   :entry entry
+                   :plural-index plural-index
+                   :source-buffer source-buffer)))
+    (pop-to-buffer buf)))
 
 (defun po-plus-jump-to-next-editable-string (&optional index)
   "Moves point to the next editable string.
