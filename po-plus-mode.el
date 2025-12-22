@@ -602,8 +602,9 @@ Behavior is otherwise the same as
       (dotimes (i (length lines))
         (insert "\""
                 (nth i lines)
-                (if (and (>= i (1- (length lines)))
-                         (not ends-with-nl))
+                (if (and
+                     (>= i (1- (length lines)))
+                     (not ends-with-nl))
                     ""
                   "\\n")
                 "\"\n")))))
@@ -729,10 +730,14 @@ Behavior is otherwise the same as
   (set-buffer-modified-p nil))
 
 (defun po-plus--insert-entries (entries)
-  (dotimes (i (length entries))
-    (po-plus--insert-entry (nth i entries))
-    (when (< i (1- (length entries)))
-      (insert "\n\n"))))
+  (let ((xs entries)
+        next)
+    (while xs
+      (setq next (cdr xs))
+      (po-plus--insert-entry (car xs))
+      (when next
+        (insert "\n\n"))
+      (setq xs next))))
 
 (defun po-plus--insert-translator-comments (comments)
   (dolist (comment (reverse comments))
