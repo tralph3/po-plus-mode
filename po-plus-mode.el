@@ -200,7 +200,8 @@ position."
     (unless (memq entry entries)
       (error "Entry not found in entries list."))
     (save-excursion
-      (goto-char (point-min))
+      (when (not (eq entry (get-text-property (point) 'entry)))
+          (goto-char (point-min)))
       (let ((match (text-property-search-forward 'entry entry t)))
         (unless match
           (error "Couldn't find entry in buffer."))
