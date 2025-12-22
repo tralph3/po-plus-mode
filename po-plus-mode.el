@@ -485,7 +485,6 @@ Behavior is otherwise the same as
     (save-excursion
       (goto-char (point-min))
       ;; ensures blank lines match ""
-      (delete-trailing-whitespace (point-min) (point-max))
       (let ((buffer-data (make-po-plus-buffer-data))
             current
             current-field
@@ -563,7 +562,7 @@ Behavior is otherwise the same as
               (setq string-accumulator
                     (concat string-accumulator (match-string 1 line))))
 
-             ((string= line "")
+             ((string-blank-p line)
               (when current
                 (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
                 (setq current-field nil
