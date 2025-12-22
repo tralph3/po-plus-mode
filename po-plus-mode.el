@@ -197,11 +197,16 @@ position."
 
 (defun po-plus--refresh-entry (entry)
   (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
-    (unless (memq entry entries)
-      (error "Entry not found in entries list."))
     (save-excursion
-      (when (not (eq entry (get-text-property (point) 'entry)))
-          (goto-char (point-min)))
+      (if (not (eq entry (get-text-property (point) 'entry)))
+          (goto-char (point-min))
+        ;; search-forward doesnt give us the true start of the entry,
+        ;; it only reads from POINT, so we need to search backward to
+        ;; find it
+        (forward-char 1) ;; safety net
+        (let ((match (text-property-search-backward 'entry entry t)))
+          (goto-char (prop-match-beginning match))))
+
       (let ((match (text-property-search-forward 'entry entry t)))
         (unless match
           (error "Couldn't find entry in buffer."))
