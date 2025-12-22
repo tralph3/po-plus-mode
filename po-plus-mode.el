@@ -912,6 +912,7 @@ Behavior is otherwise the same as
   "Major mode for editing PO files."
   (set-keymap-parent po-plus-mode-map nil)
   (setq-local revert-buffer-function #'po-plus-revert-buffer)
+  (setq-local word-wrap t)
   (setq-local imenu-create-index-function #'po-plus-imenu-index))
 
 (define-derived-mode po-plus-edit-mode text-mode "PO+ Edit"
