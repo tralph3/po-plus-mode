@@ -381,6 +381,18 @@ Behavior is otherwise the same as
   (let ((flags (po-plus-entry-flags entry)))
     (not (not (member "fuzzy" flags)))))
 
+(defun po-plus--is-entry-untranslated (entry)
+  (let ((msgstr (po-plus-entry-msgstr entry)))
+    (cond
+     ((stringp msgstr)
+      (string= msgstr ""))
+     ((vectorp msgstr)
+      (let (untranslated)
+        (dotimes (i (length msgstr))
+          (when (string= (aref msgstr i) "")
+            (setq untranslated t)))
+        untranslated)))))
+
 (defun po-plus--flush-field (current field acc &optional index)
   (when (and current field)
     (setq acc (po-plus-unescape-string acc))
@@ -819,17 +831,38 @@ Behavior is otherwise the same as
                                       'front-sticky nil))))
 
 (defun po-plus-imenu-index ()
-  "Return an index alist of PO entries for `imenu'."
-  (let (index)
+  (let (all fuzzy untranslated)
     (save-excursion
       (goto-char (point-min))
       (while-let ((match (text-property-search-forward
                           'po-plus-is-msgid t t t)))
-        (let* ((beg (prop-match-beginning match))
-               (end (prop-match-end match))
-               (msgid (buffer-substring-no-properties beg end)))
-          (push (cons msgid beg) index))))
-    (nreverse index)))
+        (let* ((pos   (copy-marker (prop-match-beginning match)))
+               (entry (get-text-property pos 'entry))
+               (name  (buffer-substring-no-properties
+                       (prop-match-beginning match)
+                       (prop-match-end match))))
+          (push (cons name pos) all)
+          (when (po-plus--is-entry-fuzzy entry)
+            (push (cons name pos) fuzzy))
+          (when (po-plus--is-entry-untranslated entry)
+            (push (cons name pos) untranslated)))))
+    (delq nil
+          (list
+           (cons "All" (nreverse all))
+           (and fuzzy
+                (cons "Fuzzy" (nreverse fuzzy)))
+           (and untranslated
+                (cons "Untranslated" (nreverse untranslated)))))))
+
+(with-eval-after-load 'consult-imenu
+  (add-to-list
+   'consult-imenu-config
+   '(po-plus-mode
+     :toplevel "All"
+     :types
+     ((?a "All" po-plus-mgstr-face)
+      (?f "Fuzzy" po-plus-msgid-face)
+      (?u "Untranslated" po-plus-empty-msgid-face)))))
 
 ;;;###autoload
 (define-derived-mode po-plus-mode special-mode "PO+"
