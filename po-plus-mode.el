@@ -52,6 +52,13 @@
     map)
   "Keymap for `po-plus-edit-mode'.")
 
+(defvar po-plus-reference-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "<mouse-1>") #'po-plus-follow-reference-at-point)
+    (define-key map (kbd "RET") #'po-plus-follow-reference-at-point)
+    map)
+  "Keymap used to enable following references in PO+ buffers.")
+
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
   :type 'string)
@@ -797,10 +804,7 @@ Behavior is otherwise the same as
                         'front-sticky nil
                         'mouse-face 'highlight
                         'po-plus-is-reference t
-                        'keymap (let ((map (make-sparse-keymap)))
-                                  (keymap-set map "<mouse-1>" #'po-plus-follow-reference-at-point)
-                                  (keymap-set map "RET" #'po-plus-follow-reference-at-point)
-                                  map)
+                        'keymap po-plus-reference-keymap
                         'help-echo "Visit reference")
             (if (< i (1- (length references)))
                 (propertize "|" 'face (list
