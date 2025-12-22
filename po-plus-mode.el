@@ -159,7 +159,8 @@ position."
       (goto-char (point-min))
       (forward-line (1- line))
       (move-to-column column)
-      (recenter))))
+      (recenter)))
+  (po-plus--update-header-line))
 
 (defun po-plus-edit-abort ()
   (interactive)
@@ -201,7 +202,8 @@ position."
               (inhibit-read-only t))
           (goto-char start)
           (delete-region start end)
-          (po-plus--insert-entry entry))))))
+          (po-plus--insert-entry entry)))))
+  (po-plus--update-header-line))
 
 (defun po-plus-edit-commit ()
   (interactive)
@@ -392,6 +394,46 @@ Behavior is otherwise the same as
           (when (string= (aref msgstr i) "")
             (setq untranslated t)))
         untranslated)))))
+
+(defun po-plus--update-header-line ()
+  (let* ((stats (po-plus--count-entries))
+         (translated (plist-get stats :translated))
+         (total (plist-get stats :total))
+         (fuzzy (plist-get stats :fuzzy))
+         (percent (if (> total 0)
+                      (/ (* translated 100) total)
+                    0)))
+    (setq header-line-format
+          (format
+           " [ Translated %d/%d (%d%%%%) ] Fuzzy: %d"
+           translated
+           total
+           percent
+           fuzzy))))
+
+(defun po-plus--count-entries ()
+  (unless po-plus--buffer-data
+    (user-error "This may not be a PO+ buffer"))
+  (let ((translated 0)
+        (untranslated 0)
+        (fuzzy 0)
+        (total 0))
+    (dolist (entry (po-plus-buffer-data-entries po-plus--buffer-data))
+      ;; Obsolete entries are ignored entirely
+      (unless (po-plus-entry-obsolete entry)
+        (setq total (1+ total))
+        (cond
+         ((po-plus--is-entry-fuzzy entry)
+          (setq fuzzy (1+ fuzzy)))
+         ((po-plus--is-entry-untranslated entry)
+          (setq untranslated (1+ untranslated)))
+         (t
+          (setq translated (1+ translated))))))
+    (list
+     :translated translated
+     :untranslated untranslated
+     :fuzzy fuzzy
+     :total total)))
 
 (defun po-plus--flush-field (current field acc &optional index)
   (when (and current field)
@@ -668,7 +710,8 @@ Behavior is otherwise the same as
       (po-plus-mode)
       (setq-local po-plus--buffer-data (po-plus-parse-buffer source-buffer))
       (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
-      (po-plus--insert-buffer-data po-plus--buffer-data))))
+      (po-plus--insert-buffer-data po-plus--buffer-data)
+      (po-plus--update-header-line))))
 
 (defun po-plus--insert-buffer-data  (buffer-data)
   (when (po-plus-buffer-data-header buffer-data)
