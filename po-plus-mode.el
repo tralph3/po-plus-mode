@@ -486,10 +486,10 @@ Behavior is otherwise the same as
   (with-current-buffer buffer
     (save-excursion
       (goto-char (point-min))
-      ;; ensures blank lines match ""
       (let ((buffer-data (make-po-plus-buffer-data))
             current
             current-field
+            current-is-obsolete
             string-accumulator
             current-msgstr-index)
         (while (not (eobp))
@@ -500,69 +500,72 @@ Behavior is otherwise the same as
               (setq current (make-po-plus-entry)))
             (cond
              ((string-prefix-p "# " line)
-              (push (substring line 2)
+              (push (substring-no-properties line 2)
                     (po-plus-entry-translator-comments current)))
 
              ((string-prefix-p "#. " line)
-              (push (substring line 3)
+              (push (substring-no-properties line 3)
                     (po-plus-entry-extracted-comments current)))
 
              ((string-prefix-p "#: " line)
-              (setf (po-plus-entry-references current)
-                    (append
-                     (split-string (substring line 3) " " t "[[:space:]]+")
-                     (po-plus-entry-references current))))
+              (push (split-string (substring-no-properties line 3) " " t "[[:space:]]+")
+                    (po-plus-entry-references current)))
 
              ((string-prefix-p "#, " line)
-              (setf (po-plus-entry-flags current)
-                    (append
-                     (split-string (substring line 3) "," t "[[:space:]]+")
-                     (po-plus-entry-flags current))))
+              (push (split-string (substring-no-properties line 3) "," t "[[:space:]]+")
+                    (po-plus-entry-references current)))
 
              ((string-prefix-p "#| " line)
-              (push (substring line 3)
+              (push (substring-no-properties line 3)
                     (po-plus-entry-previous-untranslated current)))
 
-             ((string-match "^\\(#~ \\)?msgid \"\\(.*\\)\"" line)
+             ((or (string-prefix-p "msgid" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgid" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when (match-string 1 line)
+              (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgid
-                    string-accumulator (match-string 2 line)))
+                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
-             ((string-match "^\\(#~ \\)?msgid_plural \"\\(.*\\)\"" line)
+             ((or (string-prefix-p "msgid_plural" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgid_plural" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when (match-string 1 line)
+              (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgid-plural
-                    string-accumulator (match-string 2 line)))
+                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
-             ((string-match "^\\(#~ \\)?msgstr \"\\(.*\\)\"" line)
+             ((or (string-prefix-p "msgstr" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgstr" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when (match-string 1 line)
+              (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgstr
-                    string-accumulator (match-string 2 line)))
+                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
-             ((string-match "^\\(#~ \\)?msgstr\\[\\([0-9]+\\)\\] \"\\(.*\\)\"" line)
+             ((or (string-prefix-p "msgstr[" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgstr[" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when (match-string 1 line)
+              (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
-              (setq current-field :msgstr-plural
-                    current-msgstr-index (string-to-number (match-string 2 line))
-                    string-accumulator (match-string 3 line)))
+              (let ((index-start (1+ (string-search "[" line)))
+                    (index-end (string-search "]" line)))
+                (setq current-field :msgstr-plural
+                      current-msgstr-index (string-to-number (substring-no-properties line index-start index-start))
+                      string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1))))
 
-             ((string-match "^\\(#~ \\)?msgctxt \"\\(.*\\)\"" line)
+             ((or (string-prefix-p "msgctxt" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgctxt" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when (match-string 1 line)
+              (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
               (setq current-field :msgctxt
-                    string-accumulator (match-string 2 line)))
+                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
              ((and current-field
-                   (string-match "^\"\\(.*\\)\"" line))
+                   (string-prefix-p "\"" line))
               (setq string-accumulator
-                    (concat string-accumulator (match-string 1 line))))
+                    (concat string-accumulator (substring-no-properties line 1 -1))))
 
              ((string-blank-p line)
               (when current
@@ -570,6 +573,10 @@ Behavior is otherwise the same as
                 (setq current-field nil
                       string-accumulator nil)
                 (when (po-plus-entry-msgid current)
+                  (setf (po-plus-entry-references current)
+                        (apply #'nconc (nreverse (po-plus-entry-references current))))
+                  (setf (po-plus-entry-flags current)
+                        (apply #'nconc (nreverse (po-plus-entry-flags current))))
                   (if (string= (po-plus-entry-msgid current) "")
                       (setf (po-plus-buffer-data-header buffer-data) current)
                     (push current (po-plus-buffer-data-entries buffer-data)))
@@ -585,6 +592,10 @@ Behavior is otherwise the same as
                current
                (po-plus-entry-msgid current))
           (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+          (setf (po-plus-entry-references current)
+                (apply #'nconc (nreverse (po-plus-entry-references current))))
+          (setf (po-plus-entry-flags current)
+                (apply #'nconc (nreverse (po-plus-entry-flags current))))
           (if (string= (po-plus-entry-msgid current) "")
               (setf (po-plus-buffer-data-header buffer-data) current)
             (push current (po-plus-buffer-data-entries buffer-data)))
@@ -724,11 +735,14 @@ Behavior is otherwise the same as
     (if (get-buffer buf-name)
         (switch-to-buffer (get-buffer buf-name))
       (switch-to-buffer (get-buffer-create buf-name))
-      (po-plus-mode)
-      (setq-local po-plus--buffer-data (po-plus-parse-buffer source-buffer))
-      (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
-      (po-plus--insert-buffer-data po-plus--buffer-data)
-      (po-plus--update-header-line))))
+      (garbage-collect)
+      (let ((gc-cons-threshold most-positive-fixnum)
+            (gc-cons-percentage 0.8))
+        (po-plus-mode)
+        (setq-local po-plus--buffer-data (po-plus-parse-buffer source-buffer))
+        (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
+        (po-plus--insert-buffer-data po-plus--buffer-data)
+        (po-plus--update-header-line)))))
 
 (defun po-plus--insert-buffer-data  (buffer-data)
   (when (po-plus-buffer-data-header buffer-data)
