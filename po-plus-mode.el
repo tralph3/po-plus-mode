@@ -499,28 +499,28 @@ Behavior is otherwise the same as
             (unless current
               (setq current (make-po-plus-entry)))
             (cond
-             ((string-match "^# \\(.*\\)" line)
-              (push (match-string 1 line)
+             ((string-prefix-p "# " line)
+              (push (substring line 2)
                     (po-plus-entry-translator-comments current)))
 
-             ((string-match "^#\\. \\(.*\\)" line)
-              (push (match-string 1 line)
+             ((string-prefix-p "#. " line)
+              (push (substring line 3)
                     (po-plus-entry-extracted-comments current)))
 
-             ((string-match "^#: \\(.*\\)" line)
+             ((string-prefix-p "#: " line)
               (setf (po-plus-entry-references current)
                     (append
-                     (split-string (match-string 1 line) " " t "[[:space:]]+")
+                     (split-string (substring line 3) " " t "[[:space:]]+")
                      (po-plus-entry-references current))))
 
-             ((string-match "^#, \\(.*\\)" line)
+             ((string-prefix-p "#, " line)
               (setf (po-plus-entry-flags current)
                     (append
-                     (split-string (match-string 1 line) "," t "[[:space:]]+")
+                     (split-string (substring line 3) "," t "[[:space:]]+")
                      (po-plus-entry-flags current))))
 
-             ((string-match "^#| \\(.*\\)" line)
-              (push (match-string 1 line)
+             ((string-prefix-p "#| " line)
+              (push (substring line 3)
                     (po-plus-entry-previous-untranslated current)))
 
              ((string-match "^\\(#~ \\)?msgid \"\\(.*\\)\"" line)
