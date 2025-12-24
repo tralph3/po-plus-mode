@@ -31,7 +31,7 @@
 
 (defvar po-plus-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'po-plus-edit-string)
+    (define-key map (kbd "RET") #'po-plus-edit-open)
     (define-key map (kbd "n") #'po-plus-jump-to-next-editable-string)
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
     (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
@@ -50,10 +50,10 @@
 
 (defvar po-plus-edit-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'po-plus-edit-commit)
+    (define-key map (kbd "C-c C-c") #'po-plus-edit-apply)
     (define-key map (kbd "C-c C-k") #'po-plus-edit-abort)
-    (define-key map (kbd "M-n") #'po-plus-edit-next-msgstr)
-    (define-key map (kbd "M-p") #'po-plus-edit-prev-msgstr)
+    (define-key map (kbd "M-n") #'po-plus-edit-apply-and-next-msgstr)
+    (define-key map (kbd "M-p") #'po-plus-edit-apply-and-prev-msgstr)
     map)
   "Keymap for `po-plus-edit-mode'.")
 
@@ -267,45 +267,42 @@ position."
           (po-plus--insert-entry entry)))))
   (po-plus--update-header-line))
 
-(defun po-plus--with-source-window (fn)
+(defun po-plus--with-source-window (fn &rest args)
   (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
          (win (or (get-buffer-window buf 'visible)
                   (display-buffer buf))))
     (with-selected-window win
       (with-current-buffer buf
-        (funcall fn)))))
+        (apply fn args)))))
 
-(defun po-plus-edit-next-msgstr ()
+(defun po-plus-edit-apply-and-next-msgstr ()
   (interactive)
   (unless po-plus--edit-session
     (user-error "Not in a PO+ edit buffer"))
+  (po-plus-edit-apply)
   (po-plus--with-source-window #'po-plus-jump-to-next-editable-string)
   (po-plus--with-source-window #'po-plus-edit-string))
 
-(defun po-plus-edit-prev-msgstr ()
+(defun po-plus-edit-apply-and-prev-msgstr ()
   (interactive)
   (unless po-plus--edit-session
-    (user-error "Not in a PO+ edit buffer"))
+    (user-error "Not in a PO+ edit buffer")) ;
+  (po-plus-edit-apply)
   (po-plus--with-source-window #'po-plus-jump-to-prev-editable-string)
   (po-plus--with-source-window #'po-plus-edit-string))
 
-(defun po-plus-edit-commit ()
+(defun po-plus-edit-apply ()
   (interactive)
   (let* ((session po-plus--edit-session)
          (entry (po-plus-edit-session-entry session))
          (source-buffer (po-plus-edit-session-source-buffer session))
-         (data (buffer-local-value 'po-plus--buffer-data source-buffer))
          (idx (po-plus-edit-session-plural-index session)))
     (setf (po-plus-entry-msgstr-with-index entry idx) (buffer-string))
-    (if (one-window-p)
-        (kill-buffer)
-      (kill-buffer-and-window))
-    (switch-to-buffer source-buffer)
-    (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string (po-plus-edit-session-plural-index session))
-    (set-buffer-modified-p t)))
+    (po-plus--with-source-window #'po-plus--refresh-entry entry)
+    (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
+    (po-plus--with-source-window #'set-buffer-modified-p t)))
 
-(defun po-plus-edit-string ()
+(defun po-plus-edit-open ()
   (interactive)
   (unless (get-text-property (point) 'po-plus-is-msgstr)
     (user-error "No editable string here"))
