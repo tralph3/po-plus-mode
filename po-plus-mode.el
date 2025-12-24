@@ -50,7 +50,7 @@
 
 (defvar po-plus-edit-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'po-plus-edit-apply)
+    (define-key map (kbd "C-c C-c") #'po-plus-edit-apply-and-close)
     (define-key map (kbd "C-c C-k") #'po-plus-edit-abort)
     (define-key map (kbd "M-n") #'po-plus-edit-apply-and-next-msgstr)
     (define-key map (kbd "M-p") #'po-plus-edit-apply-and-prev-msgstr)
@@ -275,6 +275,15 @@ position."
       (with-current-buffer buf
         (apply fn args)))))
 
+(defun po-plus-edit-apply-and-close ()
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (po-plus-edit-apply)
+  (if (one-window-p)
+      (kill-buffer)
+    (kill-buffer-and-window)))
+
 (defun po-plus-edit-apply-and-next-msgstr ()
   (interactive)
   (unless po-plus--edit-session
@@ -299,6 +308,7 @@ position."
          (idx (po-plus-edit-session-plural-index session)))
     (setf (po-plus-entry-msgstr-with-index entry idx) (buffer-string))
     (po-plus--with-source-window #'po-plus--refresh-entry entry)
+    ;; this jump is for restoring point position after refresh
     (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
     (po-plus--with-source-window #'set-buffer-modified-p t)))
 
