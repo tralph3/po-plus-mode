@@ -586,7 +586,7 @@ Behavior is otherwise the same as
 
              ((string-prefix-p "#, " line)
               (push (split-string (substring-no-properties line 3) "," t "[[:space:]]+")
-                    (po-plus-entry-references current)))
+                    (po-plus-entry-flags current)))
 
              ((string-prefix-p "#| " line)
               (push (substring-no-properties line 3)
