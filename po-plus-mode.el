@@ -592,14 +592,6 @@ Behavior is otherwise the same as
               (push (substring-no-properties line 3)
                     (po-plus-entry-previous-untranslated current)))
 
-             ((or (string-prefix-p "msgid" line)
-                  (setq current-is-obsolete (string-prefix-p "#~ msgid" line)))
-              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
-              (when current-is-obsolete
-                (setf (po-plus-entry-obsolete current) t))
-              (setq current-field :msgid
-                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
-
              ((or (string-prefix-p "msgid_plural" line)
                   (setq current-is-obsolete (string-prefix-p "#~ msgid_plural" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
@@ -608,12 +600,12 @@ Behavior is otherwise the same as
               (setq current-field :msgid-plural
                     string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
-             ((or (string-prefix-p "msgstr" line)
-                  (setq current-is-obsolete (string-prefix-p "#~ msgstr" line)))
+             ((or (string-prefix-p "msgid" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgid" line)))
               (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
               (when current-is-obsolete
                 (setf (po-plus-entry-obsolete current) t))
-              (setq current-field :msgstr
+              (setq current-field :msgid
                     string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
              ((or (string-prefix-p "msgstr[" line)
@@ -624,8 +616,16 @@ Behavior is otherwise the same as
               (let ((index-start (1+ (string-search "[" line)))
                     (index-end (string-search "]" line)))
                 (setq current-field :msgstr-plural
-                      current-msgstr-index (string-to-number (substring-no-properties line index-start index-start))
+                      current-msgstr-index (string-to-number (substring-no-properties line index-start index-end))
                       string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1))))
+
+             ((or (string-prefix-p "msgstr" line)
+                  (setq current-is-obsolete (string-prefix-p "#~ msgstr" line)))
+              (po-plus--flush-field current current-field string-accumulator current-msgstr-index)
+              (when current-is-obsolete
+                (setf (po-plus-entry-obsolete current) t))
+              (setq current-field :msgstr
+                    string-accumulator (substring-no-properties line (1+ (string-search "\"" line)) -1)))
 
              ((or (string-prefix-p "msgctxt" line)
                   (setq current-is-obsolete (string-prefix-p "#~ msgctxt" line)))
