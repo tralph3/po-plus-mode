@@ -39,9 +39,12 @@
     (define-key map (kbd "f") #'po-plus-jump-to-next-fuzzy)
     (define-key map (kbd "F") #'po-plus-jump-to-prev-fuzzy)
     (define-key map (kbd "k") #'po-plus-kill-msgstr)
+    (define-key map (kbd "y") #'po-plus-yank-msgstr)
+    (define-key map (kbd "w") #'po-plus-save-msgstr)
+    (define-key map (kbd "C-j") #'po-plus-msgid-to-msgstr)
+    (define-key map (kbd "g") #'revert-buffer)
     (define-key map (kbd "<delete>") #'po-plus-fuzzy-entry-at-point)
     (define-key map (kbd "<tab>") #'po-plus-unfuzzy-entry-at-point)
-    (define-key map (kbd "g") #'revert-buffer)
     map)
   "Keymap for `po-plus-mode'.")
 
@@ -58,6 +61,9 @@
     (define-key map (kbd "RET") #'po-plus-follow-reference-at-point)
     map)
   "Keymap used to enable following references in PO+ buffers.")
+
+(defvar po-plus--yank-index 0
+  "Current yank index for `po-plus-yank-msgstr'.")
 
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
@@ -191,6 +197,44 @@ position."
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (kill-new (po-plus-entry-msgstr-with-index entry plural-index))
     (setf (po-plus-entry-msgstr-with-index entry plural-index) "")
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t))
+
+(defun po-plus-yank-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (unless (eq last-command this-command)
+    (setq po-plus--yank-index 0))
+
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index))
+        (text (current-kill po-plus--yank-index t)))
+    (unless text
+      (user-error "Kill ring is empty"))
+    (setf (po-plus-entry-msgstr-with-index entry plural-index) text)
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t)
+  (setq po-plus--yank-index (1+ po-plus--yank-index)))
+
+(defun po-plus-save-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (kill-new (po-plus-entry-msgstr-with-index entry plural-index))
+    (message "Saved on kill ring!")))
+
+(defun po-plus-msgid-to-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (setf (po-plus-entry-msgstr-with-index entry plural-index) (po-plus-entry-msgid entry))
     (po-plus--refresh-entry entry)
     (po-plus-jump-to-next-editable-string plural-index))
   (set-buffer-modified-p t))
