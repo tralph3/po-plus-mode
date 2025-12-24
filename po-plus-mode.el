@@ -52,6 +52,8 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'po-plus-edit-commit)
     (define-key map (kbd "C-c C-k") #'po-plus-edit-abort)
+    (define-key map (kbd "M-n") #'po-plus-edit-next-msgstr)
+    (define-key map (kbd "M-p") #'po-plus-edit-prev-msgstr)
     map)
   "Keymap for `po-plus-edit-mode'.")
 
@@ -172,7 +174,8 @@ position."
       (goto-char (point-min))
       (forward-line (1- line))
       (move-to-column column)
-      (recenter)))
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter))))
   (po-plus--update-header-line))
 
 (defun po-plus-edit-abort ()
@@ -264,6 +267,28 @@ position."
           (po-plus--insert-entry entry)))))
   (po-plus--update-header-line))
 
+(defun po-plus--with-source-window (fn)
+  (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
+         (win (or (get-buffer-window buf 'visible)
+                  (display-buffer buf))))
+    (with-selected-window win
+      (with-current-buffer buf
+        (funcall fn)))))
+
+(defun po-plus-edit-next-msgstr ()
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (po-plus--with-source-window #'po-plus-jump-to-next-editable-string)
+  (po-plus--with-source-window #'po-plus-edit-string))
+
+(defun po-plus-edit-prev-msgstr ()
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (po-plus--with-source-window #'po-plus-jump-to-prev-editable-string)
+  (po-plus--with-source-window #'po-plus-edit-string))
+
 (defun po-plus-edit-commit ()
   (interactive)
   (let* ((session po-plus--edit-session)
@@ -324,7 +349,8 @@ with that plural index."
       (goto-char start)
       (when po-plus-highlight-on-jump
         (pulse-momentary-highlight-region start end))
-      (recenter))))
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter)))))
 
 (defun po-plus-jump-to-prev-editable-string (&optional index)
   "Moves point to the previous editable string.
@@ -349,7 +375,8 @@ Behavior is otherwise the same as
       (goto-char start)
       (when po-plus-highlight-on-jump
         (pulse-momentary-highlight-region start end))
-      (recenter))))
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter)))))
 
 (defun po-plus-jump-to-next-untranslated ()
   (interactive)
@@ -361,7 +388,8 @@ Behavior is otherwise the same as
       (goto-char start)
       (when po-plus-highlight-on-jump
         (pulse-momentary-highlight-region start end))
-      (recenter))))
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter)))))
 
 (defun po-plus-jump-to-prev-untranslated ()
   (interactive)
@@ -373,7 +401,8 @@ Behavior is otherwise the same as
       (goto-char start)
       (when po-plus-highlight-on-jump
         (pulse-momentary-highlight-region start end))
-      (recenter))))
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter)))))
 
 (defun po-plus-jump-to-next-fuzzy ()
   (interactive)
