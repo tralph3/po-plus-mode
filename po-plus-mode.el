@@ -48,8 +48,7 @@
     (define-key map (kbd "w") #'po-plus-save-msgstr)
     (define-key map (kbd "C-j") #'po-plus-msgid-to-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
-    (define-key map (kbd "<delete>") #'po-plus-fuzzy-entry-at-point)
-    (define-key map (kbd "<tab>") #'po-plus-unfuzzy-entry-at-point)
+    (define-key map (kbd "<tab>") #'po-plus-toggle-fuzzy-entry-at-point)
     map)
   "Keymap for `po-plus-mode'.")
 
@@ -371,6 +370,15 @@ Behavior is otherwise the same as
       (user-error "No fuzzy entries!"))
     (goto-char found-pos)
     (po-plus-jump-to-next-editable-string)))
+
+(defun po-plus-toggle-fuzzy-entry-at-point ()
+  (interactive)
+  (let ((entry (get-text-property (point) 'entry)))
+    (unless entry
+      (user-error "No entry here!"))
+    (if (po-plus--is-entry-fuzzy entry)
+        (po-plus-unfuzzy-entry-at-point)
+      (po-plus-fuzzy-entry-at-point))))
 
 (defun po-plus-unfuzzy-entry-at-point ()
   (interactive)
