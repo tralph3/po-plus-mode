@@ -458,7 +458,7 @@ Behavior is otherwise the same as
   (set-buffer-modified-p t))
 
 (defun po-plus-edit-open ()
-  "Open the msgsrt at point for editing.
+  "Open the msgstr at point for editing.
 
 If point is not at a msgstr, signal a user error.
 
