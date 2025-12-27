@@ -76,8 +76,14 @@
     map)
   "Keymap used to enable editing strings in PO+ buffers.")
 
-(defvar po-plus--yank-index 0
+(defvar-local po-plus--yank-index 0
   "Current yank index for `po-plus-yank-msgstr'.")
+
+(defvar-local po-plus--buffer-data nil
+  "Stores a `po-plus-buffer-data' object. Used in PO+ buffers.")
+
+(defvar-local po-plus--edit-session nil
+  "Stores a `po-plus-edit-session' object. Used in PO+ edit buffers.")
 
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
