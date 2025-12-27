@@ -1179,7 +1179,7 @@ Return the buffer."
    '(po-plus-mode
      :toplevel "All"
      :types
-     ((?a "All" po-plus-mgstr-face)
+     ((?a "All" po-plus-msgstr-face)
       (?f "Fuzzy" po-plus-msgid-face)
       (?u "Untranslated" po-plus-empty-msgid-face)))))
 
