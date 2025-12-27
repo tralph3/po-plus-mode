@@ -209,8 +209,7 @@ heuristic is used to reject non-PO files."
          (not dont-validate)
          (not (string= "po" (file-name-extension file))))
     (user-error "This is likely not a PO file (no .po extension). Aborting"))
-  (switch-to-buffer (po-plus--generate-po-plus-buffer file))
-  (point-min))
+  (switch-to-buffer (po-plus--generate-po-plus-buffer file)))
 
 (defun po-plus-save ()
   (interactive)
