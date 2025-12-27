@@ -669,11 +669,16 @@ one already exists, it will be effectively replaced."
                     0)))
     (setq header-line-format
           (format
-           " [ Translated %d/%d (%d%%%%) ] Fuzzy: %d"
+           " [ Translated %d/%d (%d%%%%) ] Fuzzy: %d %s"
            translated
            total
            percent
-           fuzzy))))
+           fuzzy
+           (or (when (and
+                      (= percent 100)
+                      (= fuzzy 0))
+                 "-- Translation complete! 🎉")
+               "")))))
 
 (defun po-plus--recalculate-stats ()
   (unless po-plus--buffer-data
