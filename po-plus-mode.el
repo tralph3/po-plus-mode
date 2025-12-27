@@ -204,7 +204,9 @@ heuristic is used to reject non-PO files."
   (when (not file)
     (setq file (read-file-name "Open PO File: " nil nil t)))
   (setq file (expand-file-name file))
-  (when (not (string= "po" (file-name-extension file)))
+  (when (and
+         (not force)
+         (not (string= "po" (file-name-extension file))))
     (user-error "This is likely not a PO file (no .po extension). Aborting"))
   (switch-to-buffer (po-plus--generate-po-plus-buffer file))
   (point-min))
