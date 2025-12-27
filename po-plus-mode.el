@@ -193,28 +193,21 @@ position."
 
 ;; --- Section: PUBLIC API ---
 
-(defun po-plus-open ()
-  (interactive)
-  (when (not (string= "po" (file-name-extension (or buffer-file-name ""))))
-    (user-error "This is likely not a PO file. Aborting"))
-  (let ((buf-name (format "PO+ %s" (buffer-name)))
-        (source-buffer (current-buffer))
-        (source-file buffer-file-name)
-        (inhibit-read-only t)
-        (inhibit-redisplay t)
-        (inhibit-modification-hooks t))
-    (if (get-buffer buf-name)
-        (switch-to-buffer (get-buffer buf-name))
-      (switch-to-buffer (get-buffer-create buf-name))
-      (garbage-collect)
-      (let ((gc-cons-threshold most-positive-fixnum)
-            (gc-cons-percentage 0.8))
-        (po-plus-mode)
-        (setq-local po-plus--buffer-data (po-plus--parse-buffer source-buffer))
-        (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
-        (po-plus--insert-buffer-data po-plus--buffer-data)
-        (po-plus--recalculate-stats)
-        (po-plus--update-header-line)))))
+(defun po-plus-open (file &optional force)
+  "Open a PO file for editing in `po-plus-mode'.
+
+If FILE is nil, prompt for a file name.
+
+Unless FORCE is non-nil, FILE must have a \"po\" extension; this
+heuristic is used to reject non-PO files."
+  (interactive "i")
+  (when (not file)
+    (setq file (read-file-name "Open PO File: " nil nil t)))
+  (setq file (expand-file-name file))
+  (when (not (string= "po" (file-name-extension file)))
+    (user-error "This is likely not a PO file (no .po extension). Aborting"))
+  (switch-to-buffer (po-plus--generate-po-plus-buffer file))
+  (point-min))
 
 (defun po-plus-save ()
   (interactive)
@@ -536,7 +529,7 @@ Behavior is otherwise the same as
     (po-plus--with-source-window #'po-plus--refresh-entry entry)
     ;; this jump is for restoring point position after refresh
     (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
-    (po-plus--with-source-window #'set-buffer-modified-p INTERNAL)))
+    (po-plus--with-source-window #'set-buffer-modified-p t)))
 
 
 ;; --- Section: INTERNAL HELPERS ---
@@ -668,21 +661,12 @@ Behavior is otherwise the same as
          (buffer-data po-plus--buffer-data)
          (source-file (po-plus-buffer-data-source-file buffer-data))
          new-data)
-    (with-temp-buffer
-      (insert-file-contents (expand-file-name source-file))
-      (setq new-data (po-plus--parse-buffer))
-      (setf (po-plus-buffer-data-source-file new-data) source-file))
-    (setq po-plus--buffer-data new-data)
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (po-plus--insert-buffer-data po-plus--buffer-data)
-      (goto-char (point-min))
-      (forward-line (1- line))
-      (move-to-column column)
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter))))
-  (po-plus--recalculate-stats)
-  (po-plus--update-header-line))
+    (po-plus--generate-po-plus-buffer source-file t)
+    (goto-char (point-min))
+    (forward-line (1- line))
+    (move-to-column column)
+    (when (eq (selected-window) (get-buffer-window (current-buffer)))
+      (recenter))))
 
 (defun po-plus--unescape-string (s)
   "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
@@ -690,6 +674,40 @@ Behavior is otherwise the same as
 
 
 ;; --- Section: BUFFER PARSING ---
+
+(defun po-plus--generate-po-plus-buffer (file &optional force)
+  "Generate the PO+ buffer.
+
+Read PO entries from FILE and display them in a PO+ buffer. If the
+buffer already exists, switch to it.
+
+If the optional argument FORCE is non-nil, regenerate the buffer even if
+it already exists.
+
+Return the buffer."
+  (let ((buf-name (format "PO+ %s" file))
+        (inhibit-read-only t)
+        (inhibit-redisplay t)
+        (inhibit-modification-hooks t)
+        (gc-cons-threshold most-positive-fixnum)
+        (gc-cons-percentage 0.8)
+        buffer-data)
+    (when (or (not (get-buffer buf-name))
+              force)
+      (with-current-buffer (get-buffer-create buf-name)
+        (remove-overlays)
+        (erase-buffer)
+        (po-plus-mode)
+        (garbage-collect)
+        (with-temp-buffer
+          (insert-file-contents file)
+          (setq buffer-data (po-plus--parse-buffer)))
+        (setf (po-plus-buffer-data-source-file buffer-data) file)
+        (setq-local po-plus--buffer-data buffer-data)
+        (po-plus--insert-buffer-data po-plus--buffer-data)
+        (po-plus--recalculate-stats)
+        (po-plus--update-header-line)))
+    (get-buffer buf-name)))
 
 (defun po-plus--parse-buffer (&optional buffer)
   (unless buffer
