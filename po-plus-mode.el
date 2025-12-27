@@ -29,6 +29,11 @@
 
 (require 'cl-lib)
 
+(defgroup po-plus nil
+  "Enhanced editing and navigation for PO files."
+  :group 'text
+  :prefix "po-plus-")
+
 (defvar po-plus-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'po-plus-edit-open)
@@ -54,27 +59,50 @@
     (define-key map (kbd "C-c C-k") #'po-plus-edit-abort)
     (define-key map (kbd "M-n") #'po-plus-edit-apply-and-next-msgstr)
     (define-key map (kbd "M-p") #'po-plus-edit-apply-and-prev-msgstr)
+    (define-key map (kbd "C-j") #'po-plus-edit-msgid-to-msgstr)
     map)
   "Keymap for `po-plus-edit-mode'.")
 
-(defvar po-plus-reference-keymap
+(defvar po-plus-reference-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "<mouse-1>") #'po-plus-follow-reference-at-point)
     (define-key map (kbd "RET") #'po-plus-follow-reference-at-point)
     map)
   "Keymap used to enable following references in PO+ buffers.")
 
+(defvar po-plus-msgstr-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "<mouse-1>") #'po-plus-edit-open)
+    (define-key map (kbd "RET") #'po-plus-edit-open)
+    map)
+  "Keymap used to enable editing strings in PO+ buffers.")
+
 (defvar po-plus--yank-index 0
   "Current yank index for `po-plus-yank-msgstr'.")
 
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
-  :type 'string)
+  :type 'string
+  :group 'po-plus)
+
+(defcustom po-plus-edit-help-function-list
+  (list
+   #'po-plus-edit-apply-and-close
+   #'po-plus-edit-abort
+   #'po-plus-edit-apply-and-next-msgstr
+   #'po-plus-edit-apply-and-prev-msgstr)
+  "List of functions to display the keybinding and short description of
+when in the edit buffer.
+
+Setting it to nil removes the help section entirely."
+  :type '(repeat function)
+  :group 'po-plus)
 
 (defcustom po-plus-highlight-on-jump t
   "Wether to highlight a section of text whenever the cursor jumps to a new
 position."
-  :type 'boolean)
+  :type 'boolean
+  :group 'po-plus)
 
 (defface po-plus-translator-comments-face
   `((t ,(list
@@ -150,188 +178,98 @@ position."
   plural-index
   source-buffer)
 
+(cl-defstruct po-plus-stats
+  total
+  untranslated
+  fuzzy
+  obsolete)
+
 (cl-defstruct po-plus-buffer-data
   source-file
   header
-  entries)
+  entries
+  stats)
+
 
-(defun po-plus-revert-buffer (ignore-auto noconfirm)
-  (unless po-plus--buffer-data
-    (user-error "This may not be a PO+ buffer"))
-  (let* ((line (line-number-at-pos))
-         (column (current-column))
-         (buffer-data po-plus--buffer-data)
-         (source-file (po-plus-buffer-data-source-file buffer-data))
-         new-data)
+;; --- Section: PUBLIC API ---
+
+(defun po-plus-open ()
+  (interactive)
+  (when (not (string= "po" (file-name-extension (or buffer-file-name ""))))
+    (user-error "This is likely not a PO file. Aborting"))
+  (let ((buf-name (format "PO+ %s" (buffer-name)))
+        (source-buffer (current-buffer))
+        (source-file buffer-file-name)
+        (inhibit-read-only t)
+        (inhibit-redisplay t)
+        (inhibit-modification-hooks t))
+    (if (get-buffer buf-name)
+        (switch-to-buffer (get-buffer buf-name))
+      (switch-to-buffer (get-buffer-create buf-name))
+      (garbage-collect)
+      (let ((gc-cons-threshold most-positive-fixnum)
+            (gc-cons-percentage 0.8))
+        (po-plus-mode)
+        (setq-local po-plus--buffer-data (po-plus--parse-buffer source-buffer))
+        (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
+        (po-plus--insert-buffer-data po-plus--buffer-data)
+        (po-plus--recalculate-stats)
+        (po-plus--update-header-line)))))
+
+(defun po-plus-save ()
+  (interactive)
+  (unless (po-plus-buffer-data-entries po-plus--buffer-data)
+    (user-error "Buffer has no PO entries"))
+  (let ((file (or (po-plus-buffer-data-source-file po-plus--buffer-data)
+                  (read-file-name "No source file set, choose where to save: ")))
+        (entries (po-plus-buffer-data-entries po-plus--buffer-data))
+        (header (po-plus-buffer-data-header po-plus--buffer-data)))
     (with-temp-buffer
-      (insert-file-contents (expand-file-name source-file))
-      (setq new-data (po-plus-parse-buffer))
-      (setf (po-plus-buffer-data-source-file new-data) source-file))
-    (setq po-plus--buffer-data new-data)
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (po-plus--insert-buffer-data po-plus--buffer-data)
-      (goto-char (point-min))
-      (forward-line (1- line))
-      (move-to-column column)
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter))))
-  (po-plus--update-header-line))
+      (po-plus--write-entries `(,header))
+      (insert "\n")
+      (po-plus--write-entries entries)
+      (write-file file))
+    (set-buffer-modified-p nil)))
 
-(defun po-plus-edit-abort ()
+(defun po-plus-follow-reference-at-point ()
   (interactive)
-  (kill-buffer-and-window))
-
-(defun po-plus-entry-msgstr-with-index (entry &optional index)
-  (if (null index)
-      (po-plus-entry-msgstr entry)
-    (aref (po-plus-entry-msgstr entry) index)))
-
-(gv-define-setter po-plus-entry-msgstr-with-index (value entry &optional index)
-  `(if (null ,index)
-       (setf (po-plus-entry-msgstr ,entry) ,value)
-     (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
-
-(defun po-plus-kill-msgstr ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-msgstr)
-    (user-error "No editable string here"))
-  (let ((entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'po-plus-plural-index)))
-    (kill-new (po-plus-entry-msgstr-with-index entry plural-index))
-    (setf (po-plus-entry-msgstr-with-index entry plural-index) "")
-    (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
-  (set-buffer-modified-p t))
-
-(defun po-plus-yank-msgstr ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-msgstr)
-    (user-error "No editable string here"))
-  (unless (eq last-command this-command)
-    (setq po-plus--yank-index 0))
-
-  (let ((entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'po-plus-plural-index))
-        (text (current-kill po-plus--yank-index t)))
-    (unless text
-      (user-error "Kill ring is empty"))
-    (setf (po-plus-entry-msgstr-with-index entry plural-index) text)
-    (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
-  (set-buffer-modified-p t)
-  (setq po-plus--yank-index (1+ po-plus--yank-index)))
-
-(defun po-plus-save-msgstr ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-msgstr)
-    (user-error "No editable string here"))
-  (let ((entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'po-plus-plural-index)))
-    (kill-new (po-plus-entry-msgstr-with-index entry plural-index))
-    (message "Saved on kill ring!")))
-
-(defun po-plus-msgid-to-msgstr ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-msgstr)
-    (user-error "No editable string here"))
-  (let ((entry (get-text-property (point) 'entry))
-        (plural-index (get-text-property (point) 'po-plus-plural-index)))
-    (setf (po-plus-entry-msgstr-with-index entry plural-index) (po-plus-entry-msgid entry))
-    (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
-  (set-buffer-modified-p t))
-
-(defun po-plus--refresh-entry (entry)
-  (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
-    (save-excursion
-      (if (not (eq entry (get-text-property (point) 'entry)))
-          (goto-char (point-min))
-        ;; search-forward doesnt give us the true start of the entry,
-        ;; it only reads from POINT, so we need to search backward to
-        ;; find it
-        (forward-char 1) ;; safety net
-        (let ((match (text-property-search-backward 'entry entry t)))
-          (goto-char (prop-match-beginning match))))
-
-      (let ((match (text-property-search-forward 'entry entry t)))
-        (unless match
-          (error "Couldn't find entry in buffer."))
-        (let ((start (prop-match-beginning match))
-              (end (prop-match-end match))
-              (inhibit-read-only t)
-              (inhibit-redisplay t)
-              (inhibit-modification-hooks t))
-          (goto-char start)
-          (delete-region start end)
-          (po-plus--insert-entry entry)))))
-  (po-plus--update-header-line))
-
-(defun po-plus--with-source-window (fn &rest args)
-  (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
-         (win (or (get-buffer-window buf 'visible)
-                  (display-buffer buf))))
-    (with-selected-window win
-      (with-current-buffer buf
-        (apply fn args)))))
-
-(defun po-plus-edit-apply-and-close ()
-  (interactive)
-  (unless po-plus--edit-session
-    (user-error "Not in a PO+ edit buffer"))
-  (po-plus-edit-apply)
-  (if (one-window-p)
-      (kill-buffer)
-    (kill-buffer-and-window)))
-
-(defun po-plus-edit-apply-and-next-msgstr ()
-  (interactive)
-  (unless po-plus--edit-session
-    (user-error "Not in a PO+ edit buffer"))
-  (po-plus-edit-apply)
-  (po-plus--with-source-window #'po-plus-jump-to-next-editable-string)
-  (po-plus--with-source-window #'po-plus-edit-string))
-
-(defun po-plus-edit-apply-and-prev-msgstr ()
-  (interactive)
-  (unless po-plus--edit-session
-    (user-error "Not in a PO+ edit buffer")) ;
-  (po-plus-edit-apply)
-  (po-plus--with-source-window #'po-plus-jump-to-prev-editable-string)
-  (po-plus--with-source-window #'po-plus-edit-string))
-
-(defun po-plus-edit-apply ()
-  (interactive)
-  (let* ((session po-plus--edit-session)
-         (entry (po-plus-edit-session-entry session))
-         (source-buffer (po-plus-edit-session-source-buffer session))
-         (idx (po-plus-edit-session-plural-index session)))
-    (setf (po-plus-entry-msgstr-with-index entry idx) (buffer-string))
-    (po-plus--with-source-window #'po-plus--refresh-entry entry)
-    ;; this jump is for restoring point position after refresh
-    (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
-    (po-plus--with-source-window #'set-buffer-modified-p t)))
-
-(defun po-plus-edit-open ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-msgstr)
-    (user-error "No editable string here"))
-  (let* ((entry (get-text-property (point) 'entry))
-         (plural-index (get-text-property (point) 'po-plus-plural-index))
-         (source-buffer (current-buffer))
-         (buf (get-buffer-create "*PO+ Edit*"))
-         (text (po-plus-entry-msgstr-with-index entry plural-index)))
-    (with-current-buffer buf
-      (erase-buffer)
-      (insert text)
-      (goto-char (point-min))
-      (po-plus-edit-mode)
-      (setq-local po-plus--edit-session
-                  (make-po-plus-edit-session
-                   :entry entry
-                   :plural-index plural-index
-                   :source-buffer source-buffer)))
-    (pop-to-buffer buf)))
+  (unless (get-text-property (point) 'po-plus-is-reference)
+    (user-error "Point is not over a reference"))
+  (let* ((start (previous-property-change (point)))
+         (end (next-property-change (point)))
+         (reference (buffer-substring start end))
+         (match (string-match "^\\([^:]+\\)\\(?::\\([0-9,]*\\)\\)?\\(?::\\([0-9]+\\)\\)?" reference))
+         (filename (match-string 1 reference))
+         (line-str (match-string 2 reference))
+         (column (match-string 3 reference))
+         (lines (when (stringp line-str)
+                  (string-split line-str "," nil "[[:space:]]+"))))
+    (unless (file-exists-p filename)
+      (user-error (format "File '%s' does not exist" filename)))
+    (find-file-read-only-other-window filename)
+    (let* ((start (string-to-number (or (car lines) "")))
+           (end (if (string= (cadr lines) "")
+                    (line-number-at-pos (point-max))
+                  (max (string-to-number (or (cadr lines) "")) start))))
+      (when (not (and (= start 0) (= end 0)))
+        (goto-char (point-min))
+        (forward-line (1- start))
+        (when po-plus-highlight-on-jump
+          (if (eq start end)
+              (pulse-momentary-highlight-one-line)
+            (pulse-momentary-highlight-region
+             (save-excursion
+               (goto-char (point-min))
+               (forward-line (1- start))
+               (move-to-column 0)
+               (point))
+             (save-excursion
+               (goto-char (point-min))
+               (forward-line (1- end))
+               (move-to-column 0)
+               (point))))))
+      (when column
+        (move-to-column (string-to-number column))))))
 
 (defun po-plus-jump-to-next-editable-string (&optional index)
   "Moves point to the next editable string.
@@ -474,6 +412,177 @@ Behavior is otherwise the same as
     (forward-line (1- line))
     (move-to-column column)))
 
+(defun po-plus-kill-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
+    (setf (po-plus--entry-msgstr-with-index entry plural-index) "")
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t))
+
+(defun po-plus-yank-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (unless (eq last-command this-command)
+    (setq po-plus--yank-index 0))
+
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index))
+        (text (current-kill po-plus--yank-index t)))
+    (unless text
+      (user-error "Kill ring is empty"))
+    (setf (po-plus--entry-msgstr-with-index entry plural-index) text)
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t)
+  (setq po-plus--yank-index (1+ po-plus--yank-index)))
+
+(defun po-plus-save-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
+    (message "Saved on kill ring!")))
+
+(defun po-plus-msgid-to-msgstr ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let ((entry (get-text-property (point) 'entry))
+        (plural-index (get-text-property (point) 'po-plus-plural-index)))
+    (setf (po-plus--entry-msgstr-with-index entry plural-index) (po-plus-entry-msgid entry))
+    (po-plus--refresh-entry entry)
+    (po-plus-jump-to-next-editable-string plural-index))
+  (set-buffer-modified-p t))
+
+(defun po-plus-edit-open ()
+  (interactive)
+  (unless (get-text-property (point) 'po-plus-is-msgstr)
+    (user-error "No editable string here"))
+  (let* ((entry (get-text-property (point) 'entry))
+         (plural-index (get-text-property (point) 'po-plus-plural-index))
+         (source-buffer (current-buffer))
+         (buf (get-buffer-create "*PO+ Edit*"))
+         (text (po-plus--entry-msgstr-with-index entry plural-index)))
+    (with-current-buffer buf
+      (remove-overlays)
+      (erase-buffer)
+      (insert text)
+      (goto-char (point-min))
+      (po-plus-edit-mode)
+      (setq-local po-plus--edit-session
+                  (make-po-plus-edit-session
+                   :entry entry
+                   :plural-index plural-index
+                   :source-buffer source-buffer))
+      (po-plus--edit-insert-help-overlays))
+    (pop-to-buffer buf)))
+
+(defun po-plus-edit-abort ()
+  "Discard the current translation and close the edit buffer."
+  (interactive)
+  (kill-buffer-and-window))
+
+(defun po-plus-edit-apply-and-close ()
+  "Apply the current translation and close the edit buffer."
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (po-plus-edit-apply)
+  (if (one-window-p)
+      (kill-buffer)
+    (kill-buffer-and-window)))
+
+(defun po-plus-edit-apply-and-next-msgstr ()
+  "Apply the current translation and open the next string."
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (po-plus-edit-apply)
+  (po-plus--with-source-window #'po-plus-jump-to-next-editable-string)
+  (po-plus--with-source-window #'po-plus-edit-open))
+
+(defun po-plus-edit-apply-and-prev-msgstr ()
+  "Apply the current translation and open the previous string."
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer")) ;
+  (po-plus-edit-apply)
+  (po-plus--with-source-window #'po-plus-jump-to-prev-editable-string)
+  (po-plus--with-source-window #'po-plus-edit-open))
+
+(defun po-plus-edit-msgid-to-msgstr ()
+  (interactive)
+  (unless po-plus--edit-session
+    (user-error "Not in a PO+ edit buffer"))
+  (let ((entry (po-plus-edit-session-entry po-plus--edit-session)))
+    (erase-buffer)
+    (insert (po-plus-entry-msgid entry))))
+
+(defun po-plus-edit-apply ()
+  (interactive)
+  (let* ((session po-plus--edit-session)
+         (entry (po-plus-edit-session-entry session))
+         (source-buffer (po-plus-edit-session-source-buffer session))
+         (idx (po-plus-edit-session-plural-index session)))
+    (setf (po-plus--entry-msgstr-with-index entry idx) (buffer-string))
+    (po-plus--with-source-window #'po-plus--refresh-entry entry)
+    ;; this jump is for restoring point position after refresh
+    (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
+    (po-plus--with-source-window #'set-buffer-modified-p INTERNAL)))
+
+
+;; --- Section: INTERNAL HELPERS ---
+
+(defun po-plus--entry-msgstr-with-index (entry &optional index)
+  (if (null index)
+      (po-plus-entry-msgstr entry)
+    (aref (po-plus-entry-msgstr entry) index)))
+
+(gv-define-setter po-plus--entry-msgstr-with-index (value entry &optional index)
+  `(if (null ,index)
+       (setf (po-plus-entry-msgstr ,entry) ,value)
+     (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
+
+(defun po-plus--with-source-window (fn &rest args)
+  (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
+         (win (or (get-buffer-window buf 'visible)
+                  (display-buffer buf))))
+    (with-selected-window win
+      (with-current-buffer buf
+        (apply fn args)))))
+
+(defun po-plus--refresh-entry (entry)
+  (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
+    (save-excursion
+      (if (not (eq entry (get-text-property (point) 'entry)))
+          (goto-char (point-min))
+        ;; search-forward doesnt give us the true start of the entry,
+        ;; it only reads from POINT, so we need to search backward to
+        ;; find it
+        (forward-char 1) ;; safety net
+        (let ((match (text-property-search-backward 'entry entry t)))
+          (goto-char (prop-match-beginning match))))
+
+      (let ((match (text-property-search-forward 'entry entry t)))
+        (unless match
+          (error "Couldn't find entry in buffer."))
+        (let ((start (prop-match-beginning match))
+              (end (prop-match-end match))
+              (inhibit-read-only t)
+              (inhibit-redisplay t)
+              (inhibit-modification-hooks t))
+          (goto-char start)
+          (delete-region start end)
+          (po-plus--insert-entry entry))))))
+
 (defun po-plus--is-entry-fuzzy (entry)
   (let ((flags (po-plus-entry-flags entry)))
     (not (not (member "fuzzy" flags)))))
@@ -490,11 +599,34 @@ Behavior is otherwise the same as
             (setq untranslated t)))
         untranslated)))))
 
+(defun po-plus--edit-insert-help-overlays ()
+  (when po-plus-edit-help-function-list
+    (let ((ov (make-overlay (point-min) (point-min)))
+          (help-str ""))
+      (dolist (func po-plus-edit-help-function-list)
+        (setq help-str
+              (concat
+               help-str
+               " " (propertize (key-description (or (car (where-is-internal func))
+                                                    [?\M-x]))
+                               'face 'help-key-binding)
+               " " (propertize (car (split-string (documentation func) "\n"))
+                               'face 'font-lock-comment-face) "\n")))
+      (overlay-put ov 'after-string
+                   (concat help-str
+                           (propertize "\n"
+                                       'face (list
+                                              :strike-through t
+                                              :extend t
+                                              :inherit 'shadow)))))))
+
 (defun po-plus--update-header-line ()
-  (let* ((stats (po-plus--count-entries))
-         (translated (plist-get stats :translated))
-         (total (plist-get stats :total))
-         (fuzzy (plist-get stats :fuzzy))
+  (let* ((stats (po-plus-buffer-data-stats po-plus--buffer-data))
+         (untranslated (po-plus-stats-untranslated stats))
+         (total (po-plus-stats-total stats))
+         (translated (- total untranslated))
+         (fuzzy (po-plus-stats-fuzzy stats))
+         (obsolete (po-plus-stats-obsolete stats))
          (percent (if (> total 0)
                       (/ (* translated 100) total)
                     0)))
@@ -506,61 +638,60 @@ Behavior is otherwise the same as
            percent
            fuzzy))))
 
-(defun po-plus--count-entries ()
+(defun po-plus--recalculate-stats ()
   (unless po-plus--buffer-data
     (user-error "This may not be a PO+ buffer"))
-  (let ((translated 0)
-        (untranslated 0)
-        (fuzzy 0)
-        (total 0))
-    (dolist (entry (po-plus-buffer-data-entries po-plus--buffer-data))
-      ;; Obsolete entries are ignored entirely
-      (unless (po-plus-entry-obsolete entry)
-        (setq total (1+ total))
-        (cond
-         ((po-plus--is-entry-fuzzy entry)
-          (setq fuzzy (1+ fuzzy)))
-         ((po-plus--is-entry-untranslated entry)
-          (setq untranslated (1+ untranslated)))
-         (t
-          (setq translated (1+ translated))))))
-    (list
-     :translated translated
-     :untranslated untranslated
-     :fuzzy fuzzy
-     :total total)))
+  (unless (po-plus-buffer-data-stats po-plus--buffer-data)
+    (setf (po-plus-buffer-data-stats po-plus--buffer-data)
+          (make-po-plus-stats
+           :total 0
+           :untranslated 0
+           :fuzzy 0
+           :obsolete 0)))
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data))
+        (entries (po-plus-buffer-data-entries po-plus--buffer-data)))
+    (dolist (entry entries)
+      (cl-incf (po-plus-stats-total stats))
+      (cond
+       ((po-plus--is-entry-fuzzy entry)
+        (cl-incf (po-plus-stats-fuzzy stats)))
+       ((po-plus--is-entry-untranslated entry)
+        (cl-incf (po-plus-stats-untranslated stats)))
+       ((po-plus-entry-obsolete entry)
+        (cl-incf (po-plus-stats-obsolete stats)))))))
 
-(defun po-plus--flush-field (current field acc &optional index)
-  (when (and current field)
-    (setq acc (po-plus-unescape-string acc))
-    (pcase field
-      (:msgid
-       (setf (po-plus-entry-msgid current) acc))
-      (:msgid-plural
-       (setf (po-plus-entry-msgid-plural current) acc))
-      (:msgctxt
-       (setf (po-plus-entry-msgctxt current) acc))
-      (:msgstr
-       (setf (po-plus-entry-msgstr current) acc))
-      (:msgstr-plural
-       (let ((vec (or (po-plus-entry-msgstr current)
-                      (make-vector (1+ index) nil))))
-         ;; ensure vector is big enough
-         (when (<= (length vec) index)
-           (setq vec (vconcat vec (make-vector (- (1+ index) (length vec)) nil))))
-         (aset vec index acc)
-         (setf (po-plus-entry-msgstr current) vec))))))
+(defun po-plus--revert-buffer (ignore-auto noconfirm)
+  (unless po-plus--buffer-data
+    (user-error "This may not be a PO+ buffer"))
+  (let* ((line (line-number-at-pos))
+         (column (current-column))
+         (buffer-data po-plus--buffer-data)
+         (source-file (po-plus-buffer-data-source-file buffer-data))
+         new-data)
+    (with-temp-buffer
+      (insert-file-contents (expand-file-name source-file))
+      (setq new-data (po-plus--parse-buffer))
+      (setf (po-plus-buffer-data-source-file new-data) source-file))
+    (setq po-plus--buffer-data new-data)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (po-plus--insert-buffer-data po-plus--buffer-data)
+      (goto-char (point-min))
+      (forward-line (1- line))
+      (move-to-column column)
+      (when (eq (selected-window) (get-buffer-window (current-buffer)))
+        (recenter))))
+  (po-plus--recalculate-stats)
+  (po-plus--update-header-line))
 
-(defun po-plus-parse-header (header)
-  (let (header-plist)
-    (dolist (elt (string-split (string-trim header) "\n" t "[[:space:]]+"))
-      (let* ((split-pos (string-search ":" elt))
-             (key (string-trim (format ":%s" (substring elt 0 split-pos))))
-             (val (string-trim (substring elt (1+ split-pos)))))
-        (setq header-plist (plist-put header-plist (intern key) val))))
-    header-plist))
+(defun po-plus--unescape-string (s)
+  "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
+  (read (concat "\"" s "\"")))
+
 
-(defun po-plus-parse-buffer (&optional buffer)
+;; --- Section: BUFFER PARSING ---
+
+(defun po-plus--parse-buffer (&optional buffer)
   (unless buffer
     (setq buffer (current-buffer)))
   (with-current-buffer buffer
@@ -657,7 +788,8 @@ Behavior is otherwise the same as
                         (apply #'nconc (nreverse (po-plus-entry-references current))))
                   (setf (po-plus-entry-flags current)
                         (apply #'nconc (nreverse (po-plus-entry-flags current))))
-                  (if (string= (po-plus-entry-msgid current) "")
+                  (if (and (string= (po-plus-entry-msgid current) "")
+                           (not (po-plus-buffer-data-header buffer-data)))
                       (setf (po-plus-buffer-data-header buffer-data) current)
                     (push current (po-plus-buffer-data-entries buffer-data)))
                   (setq current nil))))
@@ -676,16 +808,46 @@ Behavior is otherwise the same as
                 (apply #'nconc (nreverse (po-plus-entry-references current))))
           (setf (po-plus-entry-flags current)
                 (apply #'nconc (nreverse (po-plus-entry-flags current))))
-          (if (string= (po-plus-entry-msgid current) "")
+          (if (and (string= (po-plus-entry-msgid current) "")
+                   (not (po-plus-buffer-data-header buffer-data)))
               (setf (po-plus-buffer-data-header buffer-data) current)
             (push current (po-plus-buffer-data-entries buffer-data)))
           (setf (po-plus-buffer-data-entries buffer-data)
                 (nreverse (po-plus-buffer-data-entries buffer-data)))
           buffer-data)))))
 
-(defun po-plus-unescape-string (s)
-  "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
-  (read (concat "\"" s "\"")))
+(defun po-plus--parse-header (header)
+  (let (header-plist)
+    (dolist (elt (string-split (string-trim header) "\n" t "[[:space:]]+"))
+      (let* ((split-pos (string-search ":" elt))
+             (key (string-trim (format ":%s" (substring elt 0 split-pos))))
+             (val (string-trim (substring elt (1+ split-pos)))))
+        (setq header-plist (plist-put header-plist (intern key) val))))
+    header-plist))
+
+(defun po-plus--flush-field (current field acc &optional index)
+  (when (and current field)
+    (setq acc (po-plus--unescape-string acc))
+    (pcase field
+      (:msgid
+       (setf (po-plus-entry-msgid current) acc))
+      (:msgid-plural
+       (setf (po-plus-entry-msgid-plural current) acc))
+      (:msgctxt
+       (setf (po-plus-entry-msgctxt current) acc))
+      (:msgstr
+       (setf (po-plus-entry-msgstr current) acc))
+      (:msgstr-plural
+       (let ((vec (or (po-plus-entry-msgstr current)
+                      (make-vector (1+ index) nil))))
+         ;; ensure vector is big enough
+         (when (<= (length vec) index)
+           (setq vec (vconcat vec (make-vector (- (1+ index) (length vec)) nil))))
+         (aset vec index acc)
+         (setf (po-plus-entry-msgstr current) vec))))))
+
+
+;; --- Section: PO+ BUFFER GENERATION ---
 
 (defun po-plus--insert-maybe-multiline-string (string)
   (let* ((ends-with-nl (string-suffix-p "\n" string))
@@ -705,124 +867,6 @@ Behavior is otherwise the same as
                     ""
                   "\\n")
                 "\"\n")))))
-
-(defun po-plus-write-entries (entries)
-  (dolist (entry entries)
-    (dolist (tr-comment (reverse (po-plus-entry-translator-comments entry)))
-      (insert (format "# %s\n" (string-replace "\t" "\\t" tr-comment))))
-    (dolist (ex-comment (reverse (po-plus-entry-extracted-comments entry)))
-      (insert (format "#. %s\n" (string-replace "\t" "\\t" ex-comment))))
-    (when (po-plus-entry-flags entry)
-      (insert (format "#, %s\n" (string-replace "\t" "\\t" (string-join (po-plus-entry-flags entry) ", ")))))
-    (dolist (previous-untranslated (reverse (po-plus-entry-previous-untranslated entry)))
-      (insert (format "#| %s\n" (string-replace "\t" "\\t" previous-untranslated))))
-    (dolist (reference (reverse (po-plus-entry-references entry)))
-      (insert (format "#: %s\n" (string-replace "\t" "\\t" reference))))
-    (when (po-plus-entry-msgctxt entry)
-      (when (po-plus-entry-obsolete entry)
-        (insert "#~ "))
-      (insert "msgctxt ")
-      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgctxt entry)))
-    (when (po-plus-entry-obsolete entry)
-      (insert "#~ "))
-    (insert "msgid ")
-    (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid entry))
-    (when (po-plus-entry-msgid-plural entry)
-      (when (po-plus-entry-obsolete entry)
-        (insert "#~ "))
-      (insert "msgid_plural ")
-      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid-plural entry)))
-    (cond
-     ((stringp (po-plus-entry-msgstr entry))
-      (when (po-plus-entry-obsolete entry)
-        (insert "#~ "))
-      (insert "msgstr ")
-      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgstr entry)))
-     ((vectorp (po-plus-entry-msgstr entry))
-      (dotimes (i (length (po-plus-entry-msgstr entry)))
-        (when (po-plus-entry-obsolete entry)
-          (insert "#~ "))
-        (insert (format "msgstr[%d] " i))
-        (po-plus--insert-maybe-multiline-string (aref (po-plus-entry-msgstr entry) i)))))
-    (insert "\n"))
-  (delete-trailing-whitespace))
-
-(defun po-plus-follow-reference-at-point ()
-  (interactive)
-  (unless (get-text-property (point) 'po-plus-is-reference)
-    (user-error "Point is not over a reference"))
-  (let* ((start (previous-property-change (point)))
-         (end (next-property-change (point)))
-         (reference (buffer-substring start end))
-         (match (string-match "^\\([^:]+\\)\\(?::\\([0-9,]*\\)\\)?\\(?::\\([0-9]+\\)\\)?" reference))
-         (filename (match-string 1 reference))
-         (line-str (match-string 2 reference))
-         (column (match-string 3 reference))
-         (lines (when (stringp line-str)
-                  (string-split line-str "," nil "[[:space:]]+"))))
-    (unless (file-exists-p filename)
-      (user-error (format "File '%s' does not exist" filename)))
-    (find-file-read-only-other-window filename)
-    (let* ((start (string-to-number (or (car lines) "")))
-           (end (if (string= (cadr lines) "")
-                    (line-number-at-pos (point-max))
-                  (max (string-to-number (or (cadr lines) "")) start))))
-      (when (not (and (= start 0) (= end 0)))
-        (goto-char (point-min))
-        (forward-line (1- start))
-        (when po-plus-highlight-on-jump
-          (if (eq start end)
-              (pulse-momentary-highlight-one-line)
-            (pulse-momentary-highlight-region
-             (save-excursion
-               (goto-char (point-min))
-               (forward-line (1- start))
-               (move-to-column 0)
-               (point))
-             (save-excursion
-               (goto-char (point-min))
-               (forward-line (1- end))
-               (move-to-column 0)
-               (point))))))
-      (when column
-        (move-to-column (string-to-number column))))))
-
-(defun po-plus-save ()
-  (interactive)
-  (unless (po-plus-buffer-data-entries po-plus--buffer-data)
-    (user-error "Buffer has no PO entries"))
-  (let ((file (or (po-plus-buffer-data-source-file po-plus--buffer-data)
-                  (read-file-name "No source file set, choose where to save: ")))
-        (entries (po-plus-buffer-data-entries po-plus--buffer-data))
-        (header (po-plus-buffer-data-header po-plus--buffer-data)))
-    (with-temp-buffer
-      (po-plus-write-entries `(,header))
-      (insert "\n")
-      (po-plus-write-entries entries)
-      (write-file file))
-    (set-buffer-modified-p nil)))
-
-(defun po-plus-open ()
-  (interactive)
-  (when (not (string= "po" (file-name-extension (or buffer-file-name ""))))
-    (user-error "This is likely not a PO file. Aborting"))
-  (let ((buf-name (format "PO+ %s" (buffer-name)))
-        (source-buffer (current-buffer))
-        (source-file buffer-file-name)
-        (inhibit-read-only t)
-        (inhibit-redisplay t)
-        (inhibit-modification-hooks t))
-    (if (get-buffer buf-name)
-        (switch-to-buffer (get-buffer buf-name))
-      (switch-to-buffer (get-buffer-create buf-name))
-      (garbage-collect)
-      (let ((gc-cons-threshold most-positive-fixnum)
-            (gc-cons-percentage 0.8))
-        (po-plus-mode)
-        (setq-local po-plus--buffer-data (po-plus-parse-buffer source-buffer))
-        (setf (po-plus-buffer-data-source-file po-plus--buffer-data) source-file)
-        (po-plus--insert-buffer-data po-plus--buffer-data)
-        (po-plus--update-header-line)))))
 
 (defun po-plus--insert-buffer-data  (buffer-data)
   (when (po-plus-buffer-data-header buffer-data)
@@ -886,6 +930,9 @@ Behavior is otherwise the same as
                         'line-prefix "→ "
                         'rear-sticky nil
                         'front-sticky nil
+                        'mouse-face 'highlight
+                        'help-echo "Edit string"
+                        'keymap po-plus-msgstr-map
                         'po-plus-is-msgstr t
                         'po-plus-is-untranslated is-empty
                         'face (if is-empty 'po-plus-empty-msgid-face 'po-plus-msgstr-face)) "\n")))
@@ -898,6 +945,9 @@ Behavior is otherwise the same as
                           'line-prefix (format "[%d] → " i)
                           'rear-sticky nil
                           'front-sticky nil
+                          'mouse-face 'highlight
+                          'help-echo "Edit string"
+                          'keymap po-plus-msgstr-map
                           'po-plus-is-msgstr t
                           'po-plus-plural-index i
                           'po-plus-is-untranslated is-empty
@@ -912,7 +962,7 @@ Behavior is otherwise the same as
                         'front-sticky nil
                         'mouse-face 'highlight
                         'po-plus-is-reference t
-                        'keymap po-plus-reference-keymap
+                        'keymap po-plus-reference-map
                         'help-echo "Visit reference")
             (if (< i (1- (length references)))
                 (propertize "|" 'face (list
@@ -971,7 +1021,7 @@ Behavior is otherwise the same as
 
 (defun po-plus--insert-header (header)
   (let ((beg (point))
-        (parsed-header (po-plus-parse-header (po-plus-entry-msgstr header))))
+        (parsed-header (po-plus--parse-header (po-plus-entry-msgstr header))))
     (dolist (i (number-sequence 0 (- (length parsed-header) 2) 2))
       (let* ((key (nth i parsed-header))
              (val (nth (1+ i) parsed-header)))
@@ -979,13 +1029,61 @@ Behavior is otherwise the same as
                         (propertize (substring (symbol-name key) 1)
                                     'face '(:box t))
                         val))))
+    (insert "\n\n\n")
     (add-text-properties beg (point) (list
                                       'header header
                                       'parsed-header parsed-header
                                       'rear-sticky nil
                                       'front-sticky nil))))
+
 
-(defun po-plus-imenu-index ()
+;; --- Section: BUFFER SAVING ---
+
+(defun po-plus--write-entries (entries)
+  (dolist (entry entries)
+    (dolist (tr-comment (reverse (po-plus-entry-translator-comments entry)))
+      (insert (format "# %s\n" (string-replace "\t" "\\t" tr-comment))))
+    (dolist (ex-comment (reverse (po-plus-entry-extracted-comments entry)))
+      (insert (format "#. %s\n" (string-replace "\t" "\\t" ex-comment))))
+    (when (po-plus-entry-flags entry)
+      (insert (format "#, %s\n" (string-replace "\t" "\\t" (string-join (po-plus-entry-flags entry) ", ")))))
+    (dolist (previous-untranslated (reverse (po-plus-entry-previous-untranslated entry)))
+      (insert (format "#| %s\n" (string-replace "\t" "\\t" previous-untranslated))))
+    (dolist (reference (reverse (po-plus-entry-references entry)))
+      (insert (format "#: %s\n" (string-replace "\t" "\\t" reference))))
+    (when (po-plus-entry-msgctxt entry)
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
+      (insert "msgctxt ")
+      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgctxt entry)))
+    (when (po-plus-entry-obsolete entry)
+      (insert "#~ "))
+    (insert "msgid ")
+    (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid entry))
+    (when (po-plus-entry-msgid-plural entry)
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
+      (insert "msgid_plural ")
+      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgid-plural entry)))
+    (cond
+     ((stringp (po-plus-entry-msgstr entry))
+      (when (po-plus-entry-obsolete entry)
+        (insert "#~ "))
+      (insert "msgstr ")
+      (po-plus--insert-maybe-multiline-string (po-plus-entry-msgstr entry)))
+     ((vectorp (po-plus-entry-msgstr entry))
+      (dotimes (i (length (po-plus-entry-msgstr entry)))
+        (when (po-plus-entry-obsolete entry)
+          (insert "#~ "))
+        (insert (format "msgstr[%d] " i))
+        (po-plus--insert-maybe-multiline-string (aref (po-plus-entry-msgstr entry) i)))))
+    (insert "\n"))
+  (delete-trailing-whitespace))
+
+
+;; --- Section: INTEGRATIONS ---
+
+(defun po-plus--imenu-index ()
   (let (all fuzzy untranslated)
     (save-excursion
       (goto-char (point-min))
@@ -1018,14 +1116,15 @@ Behavior is otherwise the same as
      ((?a "All" po-plus-mgstr-face)
       (?f "Fuzzy" po-plus-msgid-face)
       (?u "Untranslated" po-plus-empty-msgid-face)))))
+
 
 ;;;###autoload
 (define-derived-mode po-plus-mode special-mode "PO+"
   "Major mode for editing PO files."
   (set-keymap-parent po-plus-mode-map nil)
-  (setq-local revert-buffer-function #'po-plus-revert-buffer)
+  (setq-local revert-buffer-function #'po-plus--revert-buffer)
   (setq-local word-wrap t)
-  (setq-local imenu-create-index-function #'po-plus-imenu-index))
+  (setq-local imenu-create-index-function #'po-plus--imenu-index))
 
 (define-derived-mode po-plus-edit-mode text-mode "PO+ Edit"
   "Edit a single PO translation.")
