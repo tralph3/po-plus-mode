@@ -458,6 +458,12 @@ Behavior is otherwise the same as
   (set-buffer-modified-p t))
 
 (defun po-plus-edit-open ()
+  "Open the msgsrt at point for editing.
+
+If point is not at a msgstr, signal a user error.
+
+Only one editing buffer can exist at a time. If another is opened while
+one already exists, it will be effectively replaced."
   (interactive)
   (unless (get-text-property (point) 'po-plus-is-msgstr)
     (user-error "No editable string here"))
