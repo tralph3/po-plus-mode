@@ -193,6 +193,7 @@ position."
 
 ;; --- Section: PUBLIC API ---
 
+;;;###autoload
 (defun po-plus-open (file &optional dont-validate)
   "Open a PO file for editing in `po-plus-mode'.
 
@@ -1144,7 +1145,6 @@ Return the buffer."
       (?u "Untranslated" po-plus-empty-msgid-face)))))
 
 
-;;;###autoload
 (define-derived-mode po-plus-mode special-mode "PO+"
   "Major mode for editing PO files."
   (set-keymap-parent po-plus-mode-map nil)
