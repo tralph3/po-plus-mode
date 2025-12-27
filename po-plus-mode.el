@@ -384,6 +384,7 @@ Behavior is otherwise the same as
     (setf (po-plus-entry-flags entry)
           (remove "fuzzy" (po-plus-entry-flags entry)))
     (po-plus--refresh-entry entry)
+    (po-plus--decrease-fuzzy-count)
     (when (= (length (po-plus-entry-flags entry)) 0)
       (setq line (max (1- line) 0)))
     (goto-char (point-min))
@@ -401,6 +402,7 @@ Behavior is otherwise the same as
       (user-error "Entry is already fuzzy!"))
     (push "fuzzy" (po-plus-entry-flags entry))
     (po-plus--refresh-entry entry)
+    (po-plus--increase-fuzzy-count)
     (when (= (length (po-plus-entry-flags entry)) 1)
       (setq line (max (1+ line) 0)))
     (goto-char (point-min))
@@ -414,7 +416,7 @@ Behavior is otherwise the same as
   (let ((entry (get-text-property (point) 'entry))
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
-    (setf (po-plus--entry-msgstr-with-index entry plural-index) "")
+    (po-plus--set-msgstr entry plural-index "")
     (po-plus--refresh-entry entry)
     (po-plus-jump-to-next-editable-string plural-index))
   (set-buffer-modified-p t))
@@ -431,7 +433,7 @@ Behavior is otherwise the same as
         (text (current-kill po-plus--yank-index t)))
     (unless text
       (user-error "Kill ring is empty"))
-    (setf (po-plus--entry-msgstr-with-index entry plural-index) text)
+    (po-plus--set-msgstr entry plural-index text)
     (po-plus--refresh-entry entry)
     (po-plus-jump-to-next-editable-string plural-index))
   (set-buffer-modified-p t)
@@ -452,7 +454,7 @@ Behavior is otherwise the same as
     (user-error "No editable string here"))
   (let ((entry (get-text-property (point) 'entry))
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
-    (setf (po-plus--entry-msgstr-with-index entry plural-index) (po-plus-entry-msgid entry))
+    (po-plus--set-msgstr entry plural-index (po-plus-entry-msgid entry))
     (po-plus--refresh-entry entry)
     (po-plus-jump-to-next-editable-string plural-index))
   (set-buffer-modified-p t))
@@ -533,7 +535,7 @@ one already exists, it will be effectively replaced."
          (entry (po-plus-edit-session-entry session))
          (source-buffer (po-plus-edit-session-source-buffer session))
          (idx (po-plus-edit-session-plural-index session)))
-    (setf (po-plus--entry-msgstr-with-index entry idx) (buffer-string))
+    (po-plus--with-source-window #'po-plus--set-msgstr entry idx (buffer-string))
     (po-plus--with-source-window #'po-plus--refresh-entry entry)
     ;; this jump is for restoring point position after refresh
     (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
@@ -600,6 +602,40 @@ one already exists, it will be effectively replaced."
             (setq untranslated t)))
         untranslated)))))
 
+(defun po-plus--increase-fuzzy-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-incf (po-plus-stats-fuzzy stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--decrease-fuzzy-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-decf (po-plus-stats-fuzzy stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--increase-untranslated-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-incf (po-plus-stats-untranslated stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--decrease-untranslated-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-decf (po-plus-stats-untranslated stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--set-msgstr (entry plural-index new-msgstr)
+  (let ((was-untranslated (po-plus--is-entry-untranslated entry)))
+    (setf (po-plus--entry-msgstr-with-index entry plural-index) new-msgstr)
+    (let ((is-untranslated (po-plus--is-entry-untranslated entry)))
+      (when (and
+             (not was-untranslated)
+             is-untranslated)
+        (po-plus--increase-untranslated-count))
+      (when (and
+             was-untranslated
+             (not is-untranslated))
+        (po-plus--decrease-untranslated-count))
+      (po-plus--update-header-line))))
+
 (defun po-plus--edit-insert-help-overlays ()
   (when po-plus-edit-help-function-list
     (let ((ov (make-overlay (point-min) (point-min)))
@@ -653,13 +689,12 @@ one already exists, it will be effectively replaced."
         (entries (po-plus-buffer-data-entries po-plus--buffer-data)))
     (dolist (entry entries)
       (cl-incf (po-plus-stats-total stats))
-      (cond
-       ((po-plus--is-entry-fuzzy entry)
+      (when (po-plus-entry-obsolete entry)
+        (cl-incf (po-plus-stats-obsolete stats)))
+      (when (po-plus--is-entry-fuzzy entry)
         (cl-incf (po-plus-stats-fuzzy stats)))
-       ((po-plus--is-entry-untranslated entry)
-        (cl-incf (po-plus-stats-untranslated stats)))
-       ((po-plus-entry-obsolete entry)
-        (cl-incf (po-plus-stats-obsolete stats)))))))
+      (when (po-plus--is-entry-untranslated entry)
+        (cl-incf (po-plus-stats-untranslated stats))))))
 
 (defun po-plus--revert-buffer (ignore-auto noconfirm)
   (unless po-plus--buffer-data
