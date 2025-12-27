@@ -672,18 +672,19 @@ one already exists, it will be effectively replaced."
          (translated (- total untranslated))
          (fuzzy (po-plus-stats-fuzzy stats))
          (obsolete (po-plus-stats-obsolete stats))
-         (percent (if (> total 0)
-                      (/ (* translated 100) total)
-                    0)))
+         (raw-percent (if (> total 0)
+                          (* 100.0 (/ translated (float total)))
+                        0.0))
+         (percent (/ (floor (* raw-percent 100)) 100.0)))
     (setq header-line-format
           (format
-           " [ Translated %d/%d (%d%%%%) ] Fuzzy: %d %s"
+           " [ Translated %d/%d (%.2f%%%%) ] Fuzzy: %d %s"
            translated
            total
            percent
            fuzzy
            (or (when (and
-                      (= percent 100)
+                      (= translated total)
                       (= fuzzy 0))
                  "-- Translation complete! 🎉")
                "")))))
