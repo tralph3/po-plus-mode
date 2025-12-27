@@ -246,7 +246,7 @@ heuristic is used to reject non-PO files."
            (end (if (string= (cadr lines) "")
                     (line-number-at-pos (point-max))
                   (max (string-to-number (or (cadr lines) "")) start))))
-      (when (not (and (= start 0) (= end 0)))
+      (unless (and (= start 0) (= end 0))
         (goto-char (point-min))
         (forward-line (1- start))
         (when po-plus-highlight-on-jump
