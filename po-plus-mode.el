@@ -193,19 +193,19 @@ position."
 
 ;; --- Section: PUBLIC API ---
 
-(defun po-plus-open (file &optional force)
+(defun po-plus-open (file &optional dont-validate)
   "Open a PO file for editing in `po-plus-mode'.
 
 If FILE is nil, prompt for a file name.
 
-Unless FORCE is non-nil, FILE must have a \"po\" extension; this
+Unless DONT-VALIDATE is non-nil, FILE must have a \"po\" extension; this
 heuristic is used to reject non-PO files."
-  (interactive "i")
-  (when (not file)
-    (setq file (read-file-name "Open PO File: " nil nil t)))
+  (interactive
+   (list (read-file-name "Open PO file: " nil nil t)
+         current-prefix-arg))
   (setq file (expand-file-name file))
   (when (and
-         (not force)
+         (not dont-validate)
          (not (string= "po" (file-name-extension file))))
     (user-error "This is likely not a PO file (no .po extension). Aborting"))
   (switch-to-buffer (po-plus--generate-po-plus-buffer file))
@@ -683,14 +683,14 @@ one already exists, it will be effectively replaced."
 
 ;; --- Section: BUFFER PARSING ---
 
-(defun po-plus--generate-po-plus-buffer (file &optional force)
+(defun po-plus--generate-po-plus-buffer (file &optional regenerate)
   "Generate the PO+ buffer.
 
 Read PO entries from FILE and display them in a PO+ buffer. If the
 buffer already exists, switch to it.
 
-If the optional argument FORCE is non-nil, regenerate the buffer even if
-it already exists.
+If the optional argument REGENERATE is non-nil, regenerate the buffer
+even if it already exists.
 
 Return the buffer."
   (let ((buf-name (format "PO+ %s" file))
@@ -701,7 +701,7 @@ Return the buffer."
         (gc-cons-percentage 0.8)
         buffer-data)
     (when (or (not (get-buffer buf-name))
-              force)
+              regenerate)
       (with-current-buffer (get-buffer-create buf-name)
         (remove-overlays)
         (erase-buffer)
