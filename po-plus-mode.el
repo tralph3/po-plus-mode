@@ -89,7 +89,8 @@
    #'po-plus-edit-apply-and-close
    #'po-plus-edit-abort
    #'po-plus-edit-apply-and-next-msgstr
-   #'po-plus-edit-apply-and-prev-msgstr)
+   #'po-plus-edit-apply-and-prev-msgstr
+   #'po-plus-edit-msgid-to-msgstr)
   "List of functions to display the keybinding and short description of
 when in the edit buffer.
 
@@ -530,6 +531,7 @@ one already exists, it will be effectively replaced."
   (po-plus--with-source-window #'po-plus-edit-open))
 
 (defun po-plus-edit-msgid-to-msgstr ()
+  "Replace current translation with the original string."
   (interactive)
   (unless po-plus--edit-session
     (user-error "Not in a PO+ edit buffer"))
