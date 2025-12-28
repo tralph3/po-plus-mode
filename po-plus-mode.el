@@ -85,6 +85,21 @@
 (defvar-local po-plus--edit-session nil
   "Stores a `po-plus-edit-session' object. Used in PO+ edit buffers.")
 
+(defvar-local po-plus-jump-predicate #'po-plus--jump-any
+  "Predicate function used by `po-plus-jump-to-next-msgstr'.
+
+The function is called with two arguments: a `po-plus-entry' object
+and a plural index. It should return non-nil if the corresponding
+msgstr is an acceptable jump target.
+
+The plural index determines which plural form of the msgstr is
+considered. If the index is nil, the entry has no plural forms.
+Plural indices are zero-based.
+
+The function `po-plus--entry-msgstr-with-index' can be used to
+retrieve a msgstr given an entry and a nil or non-nil plural index.")
+
+
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
   :type 'string
@@ -272,111 +287,68 @@ heuristic is used to reject non-PO files."
       (when column
         (move-to-column (string-to-number column))))))
 
-(defun po-plus-jump-to-next-editable-string (&optional index)
-  "Moves point to the next editable string.
+(defun po-plus-jump-to-next-msgstr (&optional reverse)
+  "Move point to the next msgstr according to `po-plus-jump-predicate'.
 
-If optional argument INDEX is a number, jumps to the next string
-with that plural index."
+If REVERSE is non-nil, jump backwards instead.
+
+If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
   (interactive)
-  (let ((match (text-property-search-forward
-                'po-plus-is-msgstr t
-                (lambda (expected actual)
-                  (and
-                   (eq expected actual)
-                   (eq (if (eq index nil)
-                           nil
-                         (get-text-property (point) 'po-plus-plural-index))
-                       index)))
-                t)))
+  (let ((search-fn (if reverse
+                       #'text-property-search-backward
+                     #'text-property-search-forward))
+        (pred (or po-plus-jump-predicate #'po-plus--jump-any))
+        match)
+    (save-excursion
+      (while (and (not match)
+                  (setq match (funcall search-fn
+                                       'po-plus-is-msgstr nil nil t)))
+        (let* ((start (prop-match-beginning match))
+               (entry (get-text-property start 'entry))
+               (index (get-text-property start 'po-plus-plural-index)))
+          (unless (funcall pred entry index)
+            (setq match nil)))))
     (unless match
       (user-error "No next entry"))
-    (let ((start (prop-match-beginning match))
-          (end   (prop-match-end match)))
-      (goto-char start)
-      (when po-plus-highlight-on-jump
-        (pulse-momentary-highlight-region start end))
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter)))))
+    (goto-char (prop-match-beginning match))
+    (when po-plus-highlight-on-jump
+      (pulse-momentary-highlight-region
+       (prop-match-beginning match)
+       (prop-match-end match)))
+    (when (eq (selected-window) (get-buffer-window (current-buffer)))
+      (recenter))))
 
-(defun po-plus-jump-to-prev-editable-string (&optional index)
-  "Moves point to the previous editable string.
-
-Behavior is otherwise the same as
-`po-plus-jump-to-next-editable-string'."
+(defun po-plus-jump-to-next-editable-string ()
+  "Moves point to the next editable string."
   (interactive)
-  (let ((match (text-property-search-backward
-                'po-plus-is-msgstr t
-                (lambda (expected actual)
-                  (and
-                   (eq expected actual)
-                   (eq (if (eq index nil)
-                           nil
-                         (get-text-property (point) 'po-plus-plural-index))
-                       index)))
-                t)))
-    (unless match
-      (user-error "No previous entry"))
-    (let ((start (prop-match-beginning match))
-          (end   (prop-match-end match)))
-      (goto-char start)
-      (when po-plus-highlight-on-jump
-        (pulse-momentary-highlight-region start end))
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter)))))
+  (let ((po-plus-jump-predicate #'po-plus--jump-any))
+    (po-plus-jump-to-next-msgstr)))
+
+(defun po-plus-jump-to-prev-editable-string ()
+  "Moves point to the previous editable string."
+  (interactive)
+  (let ((po-plus-jump-predicate #'po-plus--jump-any))
+    (po-plus-jump-to-next-msgstr t)))
 
 (defun po-plus-jump-to-next-untranslated ()
   (interactive)
-  (let ((match (text-property-search-forward 'po-plus-is-untranslated t t t)))
-    (unless match
-      (user-error "No untranslated entries!"))
-    (let ((start (prop-match-beginning match))
-          (end (prop-match-end match)))
-      (goto-char start)
-      (when po-plus-highlight-on-jump
-        (pulse-momentary-highlight-region start end))
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter)))))
+  (let ((po-plus-jump-predicate #'po-plus--jump-untranslated))
+    (po-plus-jump-to-next-msgstr)))
 
 (defun po-plus-jump-to-prev-untranslated ()
   (interactive)
-  (let ((match (text-property-search-backward 'po-plus-is-untranslated t t t)))
-    (unless match
-      (user-error "No untranslated entries!"))
-    (let ((start (prop-match-beginning match))
-          (end (prop-match-end match)))
-      (goto-char start)
-      (when po-plus-highlight-on-jump
-        (pulse-momentary-highlight-region start end))
-      (when (eq (selected-window) (get-buffer-window (current-buffer)))
-        (recenter)))))
+  (let ((po-plus-jump-predicate #'po-plus--jump-untranslated))
+    (po-plus-jump-to-next-msgstr t)))
 
 (defun po-plus-jump-to-next-fuzzy ()
   (interactive)
-  (let (found-pos match)
-    (save-excursion
-      (while (and (not found-pos)
-                  (setq match (text-property-search-forward 'entry nil nil t)))
-        (when (po-plus--is-entry-fuzzy
-               (get-text-property (prop-match-beginning match) 'entry))
-          (setq found-pos (prop-match-beginning match)))))
-    (unless found-pos
-      (user-error "No fuzzy entries!"))
-    (goto-char found-pos)
-    (po-plus-jump-to-next-editable-string)))
+  (let ((po-plus-jump-predicate #'po-plus--jump-fuzzy))
+    (po-plus-jump-to-next-msgstr)))
 
 (defun po-plus-jump-to-prev-fuzzy ()
   (interactive)
-  (let (found-pos match)
-    (save-excursion
-      (while (and (not found-pos)
-                  (setq match (text-property-search-backward 'entry nil nil t)))
-        (when (po-plus--is-entry-fuzzy
-               (get-text-property (prop-match-beginning match) 'entry))
-          (setq found-pos (prop-match-beginning match)))))
-    (unless found-pos
-      (user-error "No fuzzy entries!"))
-    (goto-char found-pos)
-    (po-plus-jump-to-next-editable-string)))
+  (let ((po-plus-jump-predicate #'po-plus--jump-fuzzy))
+    (po-plus-jump-to-next-msgstr t)))
 
 (defun po-plus-toggle-fuzzy-entry-at-point ()
   (interactive)
@@ -433,7 +405,7 @@ Behavior is otherwise the same as
     (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
     (po-plus--set-msgstr entry plural-index "")
     (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
+    (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t))
 
 (defun po-plus-yank-msgstr ()
@@ -450,7 +422,7 @@ Behavior is otherwise the same as
       (user-error "Kill ring is empty"))
     (po-plus--set-msgstr entry plural-index text)
     (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
+    (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t)
   (setq po-plus--yank-index (1+ po-plus--yank-index)))
 
@@ -471,7 +443,7 @@ Behavior is otherwise the same as
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (po-plus--set-msgstr entry plural-index (po-plus-entry-msgid entry))
     (po-plus--refresh-entry entry)
-    (po-plus-jump-to-next-editable-string plural-index))
+    (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t))
 
 (defun po-plus-edit-open ()
@@ -554,9 +526,27 @@ one already exists, it will be effectively replaced."
     (po-plus--with-source-window #'po-plus--set-msgstr entry idx (buffer-string))
     (po-plus--with-source-window #'po-plus--refresh-entry entry)
     ;; this jump is for restoring point position after refresh
-    (po-plus--with-source-window #'po-plus-jump-to-next-editable-string idx)
+    (po-plus--with-source-window #'po-plus--restore-point-at-msgstr idx)
     (po-plus--with-source-window #'set-buffer-modified-p t)))
 
+
+
+;; --- Section: JUMP FUNCTIONS ---
+
+(defun po-plus--jump-any (entry plural-index)
+  t)
+
+(defun po-plus--jump-untranslated (entry plural-index)
+  (let ((msgstr (po-plus--entry-msgstr-with-index entry plural-index)))
+    ;; `po-plus--is-entry-untranslated' is not used here, as that
+    ;; returns true if any plural msgstr is untranslated, whereas here
+    ;; we care about this particular msgstr only
+    (string= msgstr "")))
+
+(defun po-plus--jump-fuzzy (entry plural-index)
+  (po-plus--is-entry-fuzzy entry))
+
+
 
 ;; --- Section: INTERNAL HELPERS ---
 
@@ -569,6 +559,13 @@ one already exists, it will be effectively replaced."
   `(if (null ,index)
        (setf (po-plus-entry-msgstr ,entry) ,value)
      (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
+
+(defun po-plus--restore-point-at-msgstr (&optional plural-index)
+  (let ((po-plus-jump-predicate
+         (when plural-index
+           (lambda (entry idx)
+             (= plural-index idx)))))
+    (po-plus-jump-to-next-msgstr)))
 
 (defun po-plus--with-source-window (fn &rest args)
   (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
