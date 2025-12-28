@@ -122,7 +122,10 @@ retrieve a msgstr given an entry and a nil or non-nil plural index.")
    #'po-plus-edit-abort
    #'po-plus-edit-apply-and-next-msgstr
    #'po-plus-edit-apply-and-prev-msgstr
-   #'po-plus-edit-msgid-to-msgstr)
+   #'po-plus-edit-msgid-to-msgstr
+   #'po-plus-edit-change-jump-predicate-to-any
+   #'po-plus-edit-change-jump-predicate-to-untranslated
+   #'po-plus-edit-change-jump-predicate-to-fuzzy)
   "List of functions to display the keybinding and short description of
 when in the edit buffer.
 
@@ -521,16 +524,19 @@ one already exists, it will be effectively replaced."
   (po-plus--with-source-window #'po-plus-edit-open))
 
 (defun po-plus-edit-change-jump-predicate-to-any ()
+  "Change current jump target to `Any'"
   (interactive)
   (po-plus--edit-change-jump-predicate #'po-plus--jump-any)
   (po-plus--edit-update-header-line))
 
 (defun po-plus-edit-change-jump-predicate-to-untranslated ()
+  "Change current jump target to `Untranslated'"
   (interactive)
   (po-plus--edit-change-jump-predicate #'po-plus--jump-untranslated)
   (po-plus--edit-update-header-line))
 
 (defun po-plus-edit-change-jump-predicate-to-fuzzy ()
+  "Change current jump target to `Fuzzy'"
   (interactive)
   (po-plus--edit-change-jump-predicate #'po-plus--jump-fuzzy)
   (po-plus--edit-update-header-line))
