@@ -58,6 +58,9 @@
     (define-key map (kbd "C-c C-k") #'po-plus-edit-abort)
     (define-key map (kbd "M-n") #'po-plus-edit-apply-and-next-msgstr)
     (define-key map (kbd "M-p") #'po-plus-edit-apply-and-prev-msgstr)
+    (define-key map (kbd "C-c C-a") #'po-plus-edit-change-jump-predicate-to-any)
+    (define-key map (kbd "C-c C-u") #'po-plus-edit-change-jump-predicate-to-untranslated)
+    (define-key map (kbd "C-c C-f") #'po-plus-edit-change-jump-predicate-to-fuzzy)
     (define-key map (kbd "C-j") #'po-plus-edit-msgid-to-msgstr)
     map)
   "Keymap for `po-plus-edit-mode'.")
@@ -75,6 +78,14 @@
     (define-key map (kbd "RET") #'po-plus-edit-open)
     map)
   "Keymap used to enable editing strings in PO+ buffers.")
+
+(defvar po-plus-jump-predicate-names
+  '((po-plus--jump-any          . "Any")
+    (po-plus--jump-untranslated . "Untranslated")
+    (po-plus--jump-fuzzy        . "Fuzzy"))
+  "An alist of jump predicate functions and their display names.
+
+The names are shown in PO+ edit buffers.")
 
 (defvar-local po-plus--yank-index 0
   "Current yank index for `po-plus-yank-msgstr'.")
@@ -472,6 +483,7 @@ one already exists, it will be effectively replaced."
                    :entry entry
                    :plural-index plural-index
                    :source-buffer source-buffer))
+      (po-plus--edit-update-header-line)
       (po-plus--edit-insert-help-overlays))
     (pop-to-buffer buf)))
 
@@ -496,7 +508,7 @@ one already exists, it will be effectively replaced."
   (unless po-plus--edit-session
     (user-error "Not in a PO+ edit buffer"))
   (po-plus-edit-apply)
-  (po-plus--with-source-window #'po-plus-jump-to-next-editable-string)
+  (po-plus--with-source-window #'po-plus-jump-to-next-msgstr)
   (po-plus--with-source-window #'po-plus-edit-open))
 
 (defun po-plus-edit-apply-and-prev-msgstr ()
@@ -505,8 +517,23 @@ one already exists, it will be effectively replaced."
   (unless po-plus--edit-session
     (user-error "Not in a PO+ edit buffer")) ;
   (po-plus-edit-apply)
-  (po-plus--with-source-window #'po-plus-jump-to-prev-editable-string)
+  (po-plus--with-source-window #'po-plus-jump-to-next-msgstr t)
   (po-plus--with-source-window #'po-plus-edit-open))
+
+(defun po-plus-edit-change-jump-predicate-to-any ()
+  (interactive)
+  (po-plus--edit-change-jump-predicate #'po-plus--jump-any)
+  (po-plus--edit-update-header-line))
+
+(defun po-plus-edit-change-jump-predicate-to-untranslated ()
+  (interactive)
+  (po-plus--edit-change-jump-predicate #'po-plus--jump-untranslated)
+  (po-plus--edit-update-header-line))
+
+(defun po-plus-edit-change-jump-predicate-to-fuzzy ()
+  (interactive)
+  (po-plus--edit-change-jump-predicate #'po-plus--jump-fuzzy)
+  (po-plus--edit-update-header-line))
 
 (defun po-plus-edit-msgid-to-msgstr ()
   "Replace current translation with the original string."
@@ -669,6 +696,19 @@ one already exists, it will be effectively replaced."
                                               :strike-through t
                                               :extend t
                                               :inherit 'shadow)))))))
+
+(defun po-plus--edit-change-jump-predicate (new-predicate)
+  (let ((source-buffer (po-plus-edit-session-source-buffer po-plus--edit-session)))
+    (with-current-buffer source-buffer
+      (setq-local po-plus-jump-predicate new-predicate))))
+
+(defun po-plus--edit-update-header-line ()
+  (let* ((source-buffer (po-plus-edit-session-source-buffer po-plus--edit-session))
+         (jump-predicate (buffer-local-value 'po-plus-jump-predicate source-buffer)))
+    (setq-local header-line-format
+                (format " [ Target: %s ]"
+                        (or (cdr (assoc jump-predicate po-plus-jump-predicate-names))
+                            jump-predicate)))))
 
 (defun po-plus--update-header-line ()
   (let* ((stats (po-plus-buffer-data-stats po-plus--buffer-data))
