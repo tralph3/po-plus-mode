@@ -41,6 +41,8 @@
     (define-key map (kbd "p") #'po-plus-jump-to-prev-editable-string)
     (define-key map (kbd "u") #'po-plus-jump-to-next-untranslated)
     (define-key map (kbd "U") #'po-plus-jump-to-prev-untranslated)
+    (define-key map (kbd "o") #'po-plus-jump-to-next-obsolete)
+    (define-key map (kbd "O") #'po-plus-jump-to-prev-obsolete)
     (define-key map (kbd "f") #'po-plus-jump-to-next-fuzzy)
     (define-key map (kbd "F") #'po-plus-jump-to-prev-fuzzy)
     (define-key map (kbd "k") #'po-plus-kill-msgstr)
@@ -61,6 +63,7 @@
     (define-key map (kbd "M-n") #'po-plus-edit-apply-and-next-msgstr)
     (define-key map (kbd "M-p") #'po-plus-edit-apply-and-prev-msgstr)
     (define-key map (kbd "C-c C-a") #'po-plus-edit-change-jump-predicate-to-any)
+    (define-key map (kbd "C-c C-o") #'po-plus-edit-change-jump-predicate-to-not-obsolete)
     (define-key map (kbd "C-c C-u") #'po-plus-edit-change-jump-predicate-to-untranslated)
     (define-key map (kbd "C-c C-f") #'po-plus-edit-change-jump-predicate-to-fuzzy)
     (define-key map (kbd "C-j") #'po-plus-edit-msgid-to-msgstr)
@@ -83,6 +86,7 @@
 
 (defvar po-plus-jump-predicate-names
   '((po-plus--jump-any          . "Any")
+    (po-plus--jump-not-obsolete . "Not Obsolete")
     (po-plus--jump-untranslated . "Untranslated")
     (po-plus--jump-fuzzy        . "Fuzzy"))
   "An alist of jump predicate functions and their display names.
@@ -98,7 +102,7 @@ The names are shown in PO+ edit buffers.")
 (defvar-local po-plus--edit-session nil
   "Stores a `po-plus-edit-session' object. Used in PO+ edit buffers.")
 
-(defvar-local po-plus-jump-predicate #'po-plus--jump-any
+(defvar-local po-plus-jump-predicate #'po-plus--jump-not-obsolete
   "Predicate function used by `po-plus-jump-to-next-msgstr'.
 
 The function is called with two arguments: a `po-plus-entry' object and
@@ -148,6 +152,7 @@ entries while undoing.")
    #'po-plus-edit-apply-and-prev-msgstr
    #'po-plus-edit-msgid-to-msgstr
    #'po-plus-edit-change-jump-predicate-to-any
+   #'po-plus-edit-change-jump-predicate-to-not-obsolete
    #'po-plus-edit-change-jump-predicate-to-untranslated
    #'po-plus-edit-change-jump-predicate-to-fuzzy)
   "List of functions to display the keybinding and short description of
@@ -397,6 +402,16 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
   (let ((po-plus-jump-predicate #'po-plus--jump-any))
     (po-plus-jump-to-next-msgstr t)))
 
+(defun po-plus-jump-to-next-obsolete ()
+  (interactive)
+  (let ((po-plus-jump-predicate #'po-plus--jump-obsolete))
+    (po-plus-jump-to-next-msgstr)))
+
+(defun po-plus-jump-to-prev-obsolete ()
+  (interactive)
+  (let ((po-plus-jump-predicate #'po-plus--jump-obsolete))
+    (po-plus-jump-to-next-msgstr t)))
+
 (defun po-plus-jump-to-next-untranslated ()
   (interactive)
   (let ((po-plus-jump-predicate #'po-plus--jump-untranslated))
@@ -572,6 +587,12 @@ one already exists, it will be effectively replaced."
   (po-plus--edit-change-jump-predicate #'po-plus--jump-any)
   (po-plus--edit-update-header-line))
 
+(defun po-plus-edit-change-jump-predicate-to-not-obsolete ()
+  "Change current jump target to `Not Obsolete'"
+  (interactive)
+  (po-plus--edit-change-jump-predicate #'po-plus--jump-not-obsolete)
+  (po-plus--edit-update-header-line))
+
 (defun po-plus-edit-change-jump-predicate-to-untranslated ()
   "Change current jump target to `Untranslated'"
   (interactive)
@@ -609,6 +630,12 @@ one already exists, it will be effectively replaced."
 
 (defun po-plus--jump-any (entry plural-index)
   t)
+
+(defun po-plus--jump-not-obsolete (entry plural-index)
+  (not (po-plus-entry-obsolete entry)))
+
+(defun po-plus--jump-obsolete (entry plural-index)
+  (po-plus-entry-obsolete entry))
 
 (defun po-plus--jump-untranslated (entry plural-index)
   (let ((msgstr (po-plus--entry-msgstr-with-index entry plural-index)))
