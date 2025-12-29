@@ -600,6 +600,7 @@ one already exists, it will be effectively replaced."
          (source-buffer (po-plus-edit-session-source-buffer session))
          (idx (po-plus-edit-session-plural-index session)))
     (po-plus--with-source-window #'po-plus--set-msgstr entry idx (buffer-string))
+    (po-plus--with-source-window #'po-plus--restore-point-at-msgstr idx)
     (po-plus--with-source-window #'set-buffer-modified-p t)))
 
 
