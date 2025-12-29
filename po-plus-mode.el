@@ -381,7 +381,7 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
           (unless (funcall pred entry index)
             (setq match nil)))))
     (unless match
-      (user-error "No next entry"))
+      (user-error (if reverse "No previous entry" "No next entry")))
     (goto-char (prop-match-beginning match))
     (when po-plus-highlight-on-jump
       (pulse-momentary-highlight-region
