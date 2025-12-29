@@ -99,17 +99,39 @@ The names are shown in PO+ edit buffers.")
 (defvar-local po-plus-jump-predicate #'po-plus--jump-any
   "Predicate function used by `po-plus-jump-to-next-msgstr'.
 
-The function is called with two arguments: a `po-plus-entry' object
-and a plural index. It should return non-nil if the corresponding
-msgstr is an acceptable jump target.
+The function is called with two arguments: a `po-plus-entry' object and
+a plural index. It should return non-nil if the corresponding msgstr is
+an acceptable jump target.
 
 The plural index determines which plural form of the msgstr is
-considered. If the index is nil, the entry has no plural forms.
-Plural indices are zero-based.
+considered. If the index is nil, the entry has no plural forms.  Plural
+indices are zero-based.
 
 The function `po-plus--entry-msgstr-with-index' can be used to
 retrieve a msgstr given an entry and a nil or non-nil plural index.")
 
+(defvar-local po-plus-undo-list nil
+  "Undo history for the current PO+ buffer.
+
+Each element represents a single reversible semantic change.  Elements
+are applied in order to undo previous edits.
+
+This list is managed by PO+ itself and is independent of Emacs’ built-in
+buffer undo mechanism.")
+
+(defvar-local po-plus-undo-list-index 0
+  "Current position in `po-plus-undo-list'.
+
+This index separates already-applied changes from undone ones.
+Advancing the index undoes changes; retreating it redoes them.
+
+Any new edit truncates the list beyond this index.")
+
+(defvar-local po-plus--undo-in-progress nil
+  "Set to non-nil when an undo operation is in progress.
+
+This is generally used to stop functions from registering more undo
+entries while undoing.")
 
 (defcustom po-plus-empty-string-message "<Not yet translated>"
   "Message to be displayed when a string has not yet been translated."
@@ -224,6 +246,10 @@ position."
   header
   entries
   stats)
+
+(cl-defstruct po-plus-undo-entry
+  undo
+  redo)
 
 
 ;; --- Section: PUBLIC API ---
@@ -300,6 +326,31 @@ heuristic is used to reject non-PO files."
                (point))))))
       (when column
         (move-to-column (string-to-number column))))))
+
+(defun po-plus-undo ()
+  (interactive)
+  (if (< po-plus-undo-list-index (length po-plus-undo-list))
+      (unwind-protect
+          (let* ((entry (nth po-plus-undo-list-index po-plus-undo-list))
+                 (undo (po-plus-undo-entry-undo entry))
+                 (po-plus--undo-in-progress t))
+            (apply (car undo) (cdr undo))
+            (cl-incf po-plus-undo-list-index))
+        (setq po-plus--undo-in-progress nil))
+    (user-error "No more undo history")))
+
+(defun po-plus-redo ()
+  (interactive)
+  (if (> po-plus-undo-list-index 0)
+      (unwind-protect
+          (progn
+            (let* ((entry (nth (1- po-plus-undo-list-index) po-plus-undo-list))
+                   (redo (po-plus-undo-entry-redo entry))
+                   (po-plus--undo-in-progress t))
+              (apply (car redo) (cdr redo))
+              (cl-decf po-plus-undo-list-index)))
+        (setq po-plus--undo-in-progress nil))
+    (user-error "No more redo history")))
 
 (defun po-plus-jump-to-next-msgstr (&optional reverse)
   "Move point to the next msgstr according to `po-plus-jump-predicate'.
@@ -409,7 +460,6 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
     (po-plus--set-msgstr entry plural-index "")
-    (po-plus--refresh-entry entry)
     (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t))
 
@@ -426,7 +476,6 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
     (unless text
       (user-error "Kill ring is empty"))
     (po-plus--set-msgstr entry plural-index text)
-    (po-plus--refresh-entry entry)
     (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t)
   (setq po-plus--yank-index (1+ po-plus--yank-index)))
@@ -438,6 +487,7 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
   (let ((entry (get-text-property (point) 'entry))
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (kill-new (po-plus--entry-msgstr-with-index entry plural-index))
+    (po-plus--restore-point-at-msgstr plural-index)
     (message "Saved on kill ring!")))
 
 (defun po-plus-msgid-to-msgstr ()
@@ -447,7 +497,6 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
   (let ((entry (get-text-property (point) 'entry))
         (plural-index (get-text-property (point) 'po-plus-plural-index)))
     (po-plus--set-msgstr entry plural-index (po-plus-entry-msgid entry))
-    (po-plus--refresh-entry entry)
     (po-plus--restore-point-at-msgstr plural-index))
   (set-buffer-modified-p t))
 
@@ -549,9 +598,6 @@ one already exists, it will be effectively replaced."
          (source-buffer (po-plus-edit-session-source-buffer session))
          (idx (po-plus-edit-session-plural-index session)))
     (po-plus--with-source-window #'po-plus--set-msgstr entry idx (buffer-string))
-    (po-plus--with-source-window #'po-plus--refresh-entry entry)
-    ;; this jump is for restoring point position after refresh
-    (po-plus--with-source-window #'po-plus--restore-point-at-msgstr idx)
     (po-plus--with-source-window #'set-buffer-modified-p t)))
 
 
@@ -575,6 +621,14 @@ one already exists, it will be effectively replaced."
 
 ;; --- Section: INTERNAL HELPERS ---
 
+(defun po-plus--record-undo (undo)
+  (unless po-plus--undo-in-progress
+    (unless (= po-plus-undo-list-index 0)
+      (setf po-plus-undo-list
+            (nthcdr po-plus-undo-list-index po-plus-undo-list))
+      (setq po-plus-undo-list-index 0))
+    (push undo po-plus-undo-list)))
+
 (defun po-plus--entry-msgstr-with-index (entry &optional index)
   (if (null index)
       (po-plus-entry-msgstr entry)
@@ -586,10 +640,12 @@ one already exists, it will be effectively replaced."
      (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
 
 (defun po-plus--restore-point-at-msgstr (&optional plural-index)
-  (let ((po-plus-jump-predicate
-         (when plural-index
-           (lambda (entry idx)
-             (= plural-index idx)))))
+  (let* ((idx plural-index)
+         (po-plus-jump-predicate
+          (when (numberp idx)
+            (lambda (_entry prop-idx)
+              (eql idx prop-idx)))))
+    (goto-char (previous-single-property-change (point) 'entry))
     (po-plus-jump-to-next-msgstr)))
 
 (defun po-plus--with-source-window (fn &rest args)
@@ -604,14 +660,26 @@ one already exists, it will be effectively replaced."
   (unless (member "fuzzy" (po-plus-entry-flags entry))
     (push "fuzzy" (po-plus-entry-flags entry))
     (po-plus--refresh-entry entry)
-    (po-plus--increase-fuzzy-count)))
+    (po-plus--increase-fuzzy-count)
+    (po-plus--record-undo
+     (make-po-plus-undo-entry
+      :undo (list
+             #'po-plus--unfuzzy-entry entry)
+      :redo (list
+             #'po-plus--fuzzy-entry entry)))))
 
 (defun po-plus--unfuzzy-entry (entry)
   (when (member "fuzzy" (po-plus-entry-flags entry))
     (setf (po-plus-entry-flags entry)
           (remove "fuzzy" (po-plus-entry-flags entry)))
     (po-plus--refresh-entry entry)
-    (po-plus--decrease-fuzzy-count)))
+    (po-plus--decrease-fuzzy-count)
+    (po-plus--record-undo
+     (make-po-plus-undo-entry
+      :undo (list
+             #'po-plus--fuzzy-entry entry)
+      :redo (list
+             #'po-plus--unfuzzy-entry entry)))))
 
 (defun po-plus--refresh-entry (entry)
   (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
@@ -674,18 +742,27 @@ one already exists, it will be effectively replaced."
     (po-plus--update-header-line)))
 
 (defun po-plus--set-msgstr (entry plural-index new-msgstr)
-  (let ((was-untranslated (po-plus--is-entry-untranslated entry)))
-    (setf (po-plus--entry-msgstr-with-index entry plural-index) new-msgstr)
-    (let ((is-untranslated (po-plus--is-entry-untranslated entry)))
-      (when (and
-             (not was-untranslated)
-             is-untranslated)
-        (po-plus--increase-untranslated-count))
-      (when (and
-             was-untranslated
-             (not is-untranslated))
-        (po-plus--decrease-untranslated-count))
-      (po-plus--update-header-line))))
+  (let ((old-msgstr (po-plus--entry-msgstr-with-index entry plural-index)))
+    (unless (string= old-msgstr new-msgstr)
+      (let ((was-untranslated (po-plus--is-entry-untranslated entry)))
+        (setf (po-plus--entry-msgstr-with-index entry plural-index) new-msgstr)
+        (let ((is-untranslated (po-plus--is-entry-untranslated entry)))
+          (when (and
+                 (not was-untranslated)
+                 is-untranslated)
+            (po-plus--increase-untranslated-count))
+          (when (and
+                 was-untranslated
+                 (not is-untranslated))
+            (po-plus--decrease-untranslated-count))
+          (po-plus--update-header-line)))
+      (po-plus--refresh-entry entry)
+      (po-plus--record-undo
+       (make-po-plus-undo-entry
+        :undo (list
+               #'po-plus--set-msgstr entry plural-index old-msgstr)
+        :redo (list
+               #'po-plus--set-msgstr entry plural-index new-msgstr))))))
 
 (defun po-plus--edit-insert-help-overlays ()
   (when po-plus-edit-help-function-list
@@ -1255,6 +1332,7 @@ Return the buffer."
   (setq-local revert-buffer-function #'po-plus--revert-buffer)
   (setq-local word-wrap t)
   (setq-local buffer-undo-list t)
+  (setq-local po-plus--undo-in-progress nil)
   (setq-local imenu-create-index-function #'po-plus--imenu-index))
 
 (define-derived-mode po-plus-edit-mode text-mode "PO+ Edit"
