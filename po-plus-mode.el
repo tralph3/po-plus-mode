@@ -53,6 +53,7 @@
     (define-key map (kbd "C-_")   #'po-plus-undo)
     (define-key map (kbd "M-_")   #'po-plus-redo)
     (define-key map (kbd "<tab>") #'po-plus-toggle-fuzzy-entry-at-point)
+    (define-key map (kbd "<delete>") #'po-plus-toggle-obsolete-entry-at-point)
     map)
   "Keymap for `po-plus-mode'.")
 
@@ -469,6 +470,33 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
     (forward-line (1- line))
     (move-to-column column)))
 
+(defun po-plus-toggle-obsolete-entry-at-point ()
+  (interactive)
+  (let ((entry (get-text-property (point) 'entry)))
+    (unless entry
+      (user-error "No entry here!"))
+    (if (po-plus-entry-obsolete entry)
+        (po-plus-unobsolete-entry-at-point)
+      (po-plus-obsolete-entry-at-point))))
+
+(defun po-plus-unobsolete-entry-at-point ()
+  (interactive)
+  (let ((entry (get-text-property (point) 'entry))
+        (pos (point)))
+    (unless entry
+      (user-error "No entry to unobsolete here!"))
+    (po-plus--unobsolete-entry entry)
+    (goto-char pos)))
+
+(defun po-plus-obsolete-entry-at-point ()
+  (interactive)
+  (let ((entry (get-text-property (point) 'entry))
+        (pos (point)))
+    (unless entry
+      (user-error "No entry to obsolete here!"))
+    (po-plus--obsolete-entry entry)
+    (goto-char pos)))
+
 (defun po-plus-kill-msgstr ()
   (interactive)
   (unless (get-text-property (point) 'po-plus-is-msgstr)
@@ -693,10 +721,8 @@ one already exists, it will be effectively replaced."
     (po-plus--increase-fuzzy-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
-      :undo (list
-             #'po-plus--unfuzzy-entry entry)
-      :redo (list
-             #'po-plus--fuzzy-entry entry)))))
+      :undo (list #'po-plus--unfuzzy-entry entry)
+      :redo (list #'po-plus--fuzzy-entry entry)))))
 
 (defun po-plus--unfuzzy-entry (entry)
   (when (member "fuzzy" (po-plus-entry-flags entry))
@@ -706,10 +732,26 @@ one already exists, it will be effectively replaced."
     (po-plus--decrease-fuzzy-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
-      :undo (list
-             #'po-plus--fuzzy-entry entry)
-      :redo (list
-             #'po-plus--unfuzzy-entry entry)))))
+      :undo (list #'po-plus--fuzzy-entry entry)
+      :redo (list #'po-plus--unfuzzy-entry entry)))))
+
+(defun po-plus--obsolete-entry (entry)
+  (unless (po-plus-entry-obsolete entry)
+    (setf (po-plus-entry-obsolete entry) t)
+    (po-plus--refresh-entry entry)
+    (po-plus--record-undo
+     (make-po-plus-undo-entry
+      :undo (list #'po-plus--unobsolete-entry entry)
+      :redo (list #'po-plus--obsolete-entry entry)))))
+
+(defun po-plus--unobsolete-entry (entry)
+  (when (po-plus-entry-obsolete entry)
+    (setf (po-plus-entry-obsolete entry) nil)
+    (po-plus--refresh-entry entry)
+    (po-plus--record-undo
+     (make-po-plus-undo-entry
+      :undo (list #'po-plus--obsolete-entry entry)
+      :redo (list #'po-plus--unobsolete-entry entry)))))
 
 (defun po-plus--refresh-entry (entry)
   (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
