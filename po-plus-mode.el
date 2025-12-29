@@ -380,12 +380,7 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
         (column (current-column)))
     (unless entry
       (user-error "No entry to unfuzzy here!"))
-    (unless (member "fuzzy" (po-plus-entry-flags entry))
-      (user-error "Entry is not fuzzy!"))
-    (setf (po-plus-entry-flags entry)
-          (remove "fuzzy" (po-plus-entry-flags entry)))
-    (po-plus--refresh-entry entry)
-    (po-plus--decrease-fuzzy-count)
+    (po-plus--unfuzzy-entry entry)
     (when (= (length (po-plus-entry-flags entry)) 0)
       (setq line (max (1- line) 0)))
     (goto-char (point-min))
@@ -399,11 +394,7 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
         (column (current-column)))
     (unless entry
       (user-error "No entry to fuzzy here!"))
-    (when (member "fuzzy" (po-plus-entry-flags entry))
-      (user-error "Entry is already fuzzy!"))
-    (push "fuzzy" (po-plus-entry-flags entry))
-    (po-plus--refresh-entry entry)
-    (po-plus--increase-fuzzy-count)
+    (po-plus--fuzzy-entry entry)
     (when (= (length (po-plus-entry-flags entry)) 1)
       (setq line (max (1+ line) 0)))
     (goto-char (point-min))
@@ -607,6 +598,19 @@ one already exists, it will be effectively replaced."
     (with-selected-window win
       (with-current-buffer buf
         (apply fn args)))))
+
+(defun po-plus--fuzzy-entry (entry)
+  (unless (member "fuzzy" (po-plus-entry-flags entry))
+    (push "fuzzy" (po-plus-entry-flags entry))
+    (po-plus--refresh-entry entry)
+    (po-plus--increase-fuzzy-count)))
+
+(defun po-plus--unfuzzy-entry (entry)
+  (when (member "fuzzy" (po-plus-entry-flags entry))
+    (setf (po-plus-entry-flags entry)
+          (remove "fuzzy" (po-plus-entry-flags entry)))
+    (po-plus--refresh-entry entry)
+    (po-plus--decrease-fuzzy-count)))
 
 (defun po-plus--refresh-entry (entry)
   (let ((entries (po-plus-buffer-data-entries po-plus--buffer-data)))
