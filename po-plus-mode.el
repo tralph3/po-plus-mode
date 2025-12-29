@@ -48,6 +48,8 @@
     (define-key map (kbd "w") #'po-plus-save-msgstr)
     (define-key map (kbd "C-j") #'po-plus-msgid-to-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
+    (define-key map (kbd "C-_")   #'po-plus-undo)
+    (define-key map (kbd "M-_")   #'po-plus-redo)
     (define-key map (kbd "<tab>") #'po-plus-toggle-fuzzy-entry-at-point)
     map)
   "Keymap for `po-plus-mode'.")
