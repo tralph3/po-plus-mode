@@ -226,6 +226,11 @@ position."
          :inherit 'shadow)))
   "Face to use for dividers.")
 
+(defface po-plus-obsolete-face
+  `((t ,(list
+         :strike-through t)))
+  "Face to use for obsolete entries.")
+
 (cl-defstruct po-plus-entry
   translator-comments
   extracted-comments
@@ -739,6 +744,7 @@ one already exists, it will be effectively replaced."
   (unless (po-plus-entry-obsolete entry)
     (setf (po-plus-entry-obsolete entry) t)
     (po-plus--refresh-entry entry)
+    (po-plus--increase-obsolete-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
       :undo (list #'po-plus--unobsolete-entry entry)
@@ -748,6 +754,7 @@ one already exists, it will be effectively replaced."
   (when (po-plus-entry-obsolete entry)
     (setf (po-plus-entry-obsolete entry) nil)
     (po-plus--refresh-entry entry)
+    (po-plus--decrease-obsolete-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
       :undo (list #'po-plus--obsolete-entry entry)
@@ -801,6 +808,16 @@ one already exists, it will be effectively replaced."
 (defun po-plus--decrease-fuzzy-count ()
   (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
     (cl-decf (po-plus-stats-fuzzy stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--increase-obsolete-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-incf (po-plus-stats-obsolete stats))
+    (po-plus--update-header-line)))
+
+(defun po-plus--decrease-obsolete-count ()
+  (let ((stats (po-plus-buffer-data-stats po-plus--buffer-data)))
+    (cl-decf (po-plus-stats-obsolete stats))
     (po-plus--update-header-line)))
 
 (defun po-plus--increase-untranslated-count ()
@@ -883,11 +900,12 @@ one already exists, it will be effectively replaced."
          (percent (/ (floor (* raw-percent 100)) 100.0)))
     (setq header-line-format
           (format
-           " [ Translated %d/%d (%.2f%%%%) ] Fuzzy: %d %s"
+           " [ Translated %d/%d (%.2f%%%%) ] Fuzzy: %d | Obsolete: %d %s"
            translated
            total
            percent
            fuzzy
+           obsolete
            (or (when (and
                       (= translated total)
                       (= fuzzy 0))
@@ -1370,7 +1388,7 @@ Return the buffer."
 ;; --- Section: INTEGRATIONS ---
 
 (defun po-plus--imenu-index ()
-  (let (all fuzzy untranslated)
+  (let (all fuzzy untranslated obsolete)
     (save-excursion
       (goto-char (point-min))
       (while-let ((match (text-property-search-forward
@@ -1384,14 +1402,18 @@ Return the buffer."
           (when (po-plus--is-entry-fuzzy entry)
             (push (cons name pos) fuzzy))
           (when (po-plus--is-entry-untranslated entry)
-            (push (cons name pos) untranslated)))))
+            (push (cons name pos) untranslated))
+          (when (po-plus-entry-obsolete entry)
+            (push (cons name pos) obsolete)))))
     (delq nil
           (list
            (cons "All" (nreverse all))
            (and fuzzy
                 (cons "Fuzzy" (nreverse fuzzy)))
            (and untranslated
-                (cons "Untranslated" (nreverse untranslated)))))))
+                (cons "Untranslated" (nreverse untranslated)))
+           (and obsolete
+                (cons "Obsolete" (nreverse obsolete)))))))
 
 (with-eval-after-load 'consult-imenu
   (add-to-list
@@ -1401,7 +1423,8 @@ Return the buffer."
      :types
      ((?a "All" po-plus-msgstr-face)
       (?f "Fuzzy" po-plus-msgid-face)
-      (?u "Untranslated" po-plus-empty-msgid-face)))))
+      (?u "Untranslated" po-plus-empty-msgid-face)
+      (?o "Obsolete" po-plus-obsolete-face)))))
 
 
 (define-derived-mode po-plus-mode special-mode "PO+"
