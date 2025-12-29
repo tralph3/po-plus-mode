@@ -467,18 +467,19 @@ one already exists, it will be effectively replaced."
          (buf (get-buffer-create "*PO+ Edit*"))
          (text (po-plus--entry-msgstr-with-index entry plural-index)))
     (with-current-buffer buf
-      (remove-overlays)
-      (erase-buffer)
-      (insert text)
-      (goto-char (point-min))
-      (po-plus-edit-mode)
-      (setq-local po-plus--edit-session
-                  (make-po-plus-edit-session
-                   :entry entry
-                   :plural-index plural-index
-                   :source-buffer source-buffer))
-      (po-plus--edit-update-header-line)
-      (po-plus--edit-insert-help-overlays))
+      (let ((buffer-undo-list t))
+        (remove-overlays)
+        (erase-buffer)
+        (insert text)
+        (goto-char (point-min))
+        (po-plus-edit-mode)
+        (setq-local po-plus--edit-session
+                    (make-po-plus-edit-session
+                     :entry entry
+                     :plural-index plural-index
+                     :source-buffer source-buffer))
+        (po-plus--edit-update-header-line)
+        (po-plus--edit-insert-help-overlays)))
     (pop-to-buffer buf)))
 
 (defun po-plus-edit-abort ()
