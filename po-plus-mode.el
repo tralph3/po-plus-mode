@@ -1255,7 +1255,13 @@ Return the buffer."
     (add-text-properties beg (point) (list
                                       'entry entry
                                       'rear-sticky nil
-                                      'front-sticky nil))))
+                                      'front-sticky nil))
+    (when (po-plus-entry-obsolete entry)
+      ;; (1- (point)) ensures we dont affect the divider face, so its
+      ;; still present
+      (add-face-text-property beg (1- (point))
+                              (list
+                               :strike-through t) t))))
 
 (defun po-plus--insert-header (header)
   (let ((beg (point))
