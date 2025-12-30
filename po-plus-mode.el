@@ -591,7 +591,7 @@ one already exists, it will be effectively replaced."
                      :plural-index plural-index
                      :source-buffer source-buffer))
         (po-plus--edit-update-header-line)
-        (po-plus--edit-insert-help-overlays)))
+        (po-plus--edit-insert-help-overlay)))
     (pop-to-buffer buf)))
 
 (defun po-plus-edit-abort ()
@@ -897,26 +897,42 @@ end."
         :undo (list #'po-plus--set-msgstr entry plural-index old-msgstr)
         :redo (list #'po-plus--set-msgstr entry plural-index new-msgstr))))))
 
-(defun po-plus--edit-insert-help-overlays ()
-  (when po-plus-edit-help-function-list
-    (let ((ov (make-overlay (point-min) (point-min)))
-          (help-str ""))
-      (dolist (func po-plus-edit-help-function-list)
-        (setq help-str
-              (concat
-               help-str
-               " " (propertize (key-description (or (car (where-is-internal func))
-                                                    [?\M-x]))
-                               'face 'help-key-binding)
-               " " (propertize (car (split-string (documentation func) "\n"))
-                               'face 'font-lock-comment-face) "\n")))
-      (overlay-put ov 'after-string
-                   (concat help-str
-                           (propertize "\n"
-                                       'face (list
-                                              :strike-through t
-                                              :extend t
-                                              :inherit 'shadow)))))))
+(defun po-plus--make-edit-buffer-keybind-help-string ()
+  (mapconcat
+   (lambda (func)
+     (concat
+      " " (propertize (key-description (or (car (where-is-internal func)) [?\M-x]))
+                      'face 'help-key-binding)
+      " " (propertize (car (split-string (documentation func) "\n"))
+                      'face 'font-lock-comment-face)))
+   po-plus-edit-help-function-list "\n"))
+
+(defun po-plus--make-edit-buffer-msgid-help-string ()
+  (let* ((entry (po-plus-edit-session-entry po-plus--edit-session))
+         (idx (po-plus-edit-session-plural-index po-plus--edit-session))
+         (msgid (if (and (numberp idx)
+                         (> idx 0))
+                    (po-plus-entry-msgid-plural entry)
+                  (po-plus-entry-msgid entry))))
+    (concat (propertize msgid 'face 'po-plus-msgid-face))))
+
+(defun po-plus--make-edit-buffer-divider ()
+  (propertize "\n"
+              'face (list
+                     :underline t
+                     :extend t
+                     :inherit 'shadow)))
+
+(defun po-plus--make-edit-buffer-help-string ()
+  (let ((help-str ""))
+    (when po-plus-edit-help-function-list
+      (setq help-str (concat help-str (po-plus--make-edit-buffer-keybind-help-string))))
+    (setq help-str (concat help-str "\n" (po-plus--make-edit-buffer-msgid-help-string)))
+    (setq help-str (concat help-str "\n" (po-plus--make-edit-buffer-divider)))))
+
+(defun po-plus--edit-insert-help-overlay ()
+  (let ((ov (make-overlay (point-min) (point-min))))
+    (overlay-put ov 'after-string (po-plus--make-edit-buffer-help-string))))
 
 (defun po-plus--edit-change-jump-predicate (new-predicate)
   (let ((source-buffer (po-plus-edit-session-source-buffer po-plus--edit-session)))
