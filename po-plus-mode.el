@@ -1002,6 +1002,14 @@ end."
            (buffer-modified-p))
       (yes-or-no-p "PO+ buffer has unsaved changes. Kill anyway? ")
     t))
+
+(defun po-plus--guard-unsaved-buffers ()
+  "Warn the user about any modified buffer before killing emacs."
+  (cl-block nil
+    (dolist (buffer (buffer-list) t)
+      (with-current-buffer buffer
+        (unless (po-plus--guard-unsaved-buffer)
+          (cl-return-from nil nil))))))
 
 
 ;; --- Section: BUFFER PARSING ---
@@ -1482,6 +1490,7 @@ Return the buffer."
   "Major mode for editing PO files."
   (set-keymap-parent po-plus-mode-map nil)
   (add-hook 'kill-buffer-query-functions #'po-plus--guard-unsaved-buffer)
+  (add-hook 'kill-emacs-query-functions #'po-plus--guard-unsaved-buffers)
   (setq-local revert-buffer-function #'po-plus--revert-buffer)
   (setq-local word-wrap t)
   (setq-local buffer-undo-list t)
