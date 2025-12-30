@@ -749,7 +749,8 @@ end."
 
 (defun po-plus--restore-point-at-msgstr (&optional plural-index)
   (let* ((po-plus-jump-predicate #'po-plus--jump-msgstr-with-index))
-    (goto-char (previous-single-property-change (point) 'entry))
+    (goto-char (or (previous-single-property-change (point) 'entry)
+                   (point)))
     (po-plus-jump-to-next-msgstr nil plural-index)))
 
 (defun po-plus--with-source-window (fn &rest args)
