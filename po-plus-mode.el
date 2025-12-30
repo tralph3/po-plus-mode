@@ -48,6 +48,7 @@
     (define-key map (kbd "k") #'po-plus-kill-msgstr)
     (define-key map (kbd "y") #'po-plus-yank-msgstr)
     (define-key map (kbd "w") #'po-plus-save-msgstr)
+    (define-key map (kbd "C-x C-s") #'po-plus-save)
     (define-key map (kbd "C-j") #'po-plus-msgid-to-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
     (define-key map (kbd "C-_")   #'po-plus-undo)
@@ -993,6 +994,13 @@ end."
 (defun po-plus--unescape-string (s)
   "Convert C-style escapes (\\n, \\t, \\\", etc.) in S to real characters."
   (read (concat "\"" s "\"")))
+
+(defun po-plus--guard-unsaved-buffer ()
+  "Warn the user before killing a PO+ buffer with unsaved changes."
+  (if (and (derived-mode-p 'po-plus-mode)
+           (buffer-modified-p))
+      (yes-or-no-p "PO+ buffer has unsaved changes. Kill anyway? ")
+    t))
 
 
 ;; --- Section: BUFFER PARSING ---
@@ -1472,6 +1480,7 @@ Return the buffer."
 (define-derived-mode po-plus-mode special-mode "PO+"
   "Major mode for editing PO files."
   (set-keymap-parent po-plus-mode-map nil)
+  (add-hook 'kill-buffer-query-functions #'po-plus--guard-unsaved-buffer)
   (setq-local revert-buffer-function #'po-plus--revert-buffer)
   (setq-local word-wrap t)
   (setq-local buffer-undo-list t)
