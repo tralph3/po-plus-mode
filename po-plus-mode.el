@@ -48,6 +48,7 @@
     (define-key map (kbd "k") #'po-plus-kill-msgstr)
     (define-key map (kbd "y") #'po-plus-yank-msgstr)
     (define-key map (kbd "w") #'po-plus-save-msgstr)
+    (define-key map (kbd "q") #'quit-window)
     (define-key map (kbd "C-x C-s") #'po-plus-save)
     (define-key map (kbd "C-j") #'po-plus-msgid-to-msgstr)
     (define-key map (kbd "g") #'revert-buffer)
