@@ -106,9 +106,11 @@ The names are shown in PO+ edit buffers.")
 (defvar-local po-plus-jump-predicate #'po-plus--jump-not-obsolete
   "Predicate function used by `po-plus-jump-to-next-msgstr'.
 
-The function is called with two arguments: a `po-plus-entry' object and
-a plural index. It should return non-nil if the corresponding msgstr is
-an acceptable jump target.
+The function is called with a minimum of two arguments: a
+`po-plus-entry' object and a plural index. It should return non-nil if
+the corresponding msgstr is an acceptable jump target. The rest of the
+arguments are the extra args passed to `po-plus-jump-to-next-msgstr'
+as-is.
 
 The plural index determines which plural form of the msgstr is
 considered. If the index is nil, the entry has no plural forms.  Plural
@@ -261,6 +263,7 @@ position."
   stats)
 
 (cl-defstruct po-plus-undo-entry
+  restore-point
   undo
   redo)
 
@@ -346,8 +349,11 @@ heuristic is used to reject non-PO files."
       (unwind-protect
           (let* ((entry (nth po-plus-undo-list-index po-plus-undo-list))
                  (undo (po-plus-undo-entry-undo entry))
+                 (restore (po-plus-undo-entry-restore-point entry))
                  (po-plus--undo-in-progress t))
             (apply (car undo) (cdr undo))
+            (when restore
+              (apply (car restore) (cdr restore)))
             (cl-incf po-plus-undo-list-index))
         (setq po-plus--undo-in-progress nil))
     (user-error "No more undo history")))
@@ -359,16 +365,21 @@ heuristic is used to reject non-PO files."
           (progn
             (let* ((entry (nth (1- po-plus-undo-list-index) po-plus-undo-list))
                    (redo (po-plus-undo-entry-redo entry))
+                   (restore (po-plus-undo-entry-restore-point entry))
                    (po-plus--undo-in-progress t))
               (apply (car redo) (cdr redo))
+              (when restore
+                (apply (car restore) (cdr restore)))
               (cl-decf po-plus-undo-list-index)))
         (setq po-plus--undo-in-progress nil))
     (user-error "No more redo history")))
 
-(defun po-plus-jump-to-next-msgstr (&optional reverse)
+(defun po-plus-jump-to-next-msgstr (&optional reverse &rest args)
   "Move point to the next msgstr according to `po-plus-jump-predicate'.
 
 If REVERSE is non-nil, jump backwards instead.
+
+ARGS are passed on to the jump predicate as-is.
 
 If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
   (interactive)
@@ -384,7 +395,7 @@ If `po-plus-jump-predicate' is nil, default to `po-plus--jump-any'."
         (let* ((start (prop-match-beginning match))
                (entry (get-text-property start 'entry))
                (index (get-text-property start 'po-plus-plural-index)))
-          (unless (funcall pred entry index)
+          (unless (apply pred entry index args)
             (setq match nil)))))
     (unless match
       (user-error (if reverse "No previous entry" "No next entry")))
@@ -661,28 +672,60 @@ one already exists, it will be effectively replaced."
 
 ;; --- Section: JUMP FUNCTIONS ---
 
-(defun po-plus--jump-any (entry plural-index)
+(defmacro po-plus--with-jump-predicate (pred &rest body)
+  "Evaluate BODY with `po-plus-jump-predicate' temporarily set to PRED.
+
+PRED must be a function of (ENTRY INDEX)."
+  (declare (indent 1))
+  `(let ((po-plus-jump-predicate ,pred))
+     ,@body))
+
+(defun po-plus--jump-any (&rest _)
   t)
 
-(defun po-plus--jump-not-obsolete (entry plural-index)
+(defun po-plus--jump-not-obsolete (entry &rest _)
   (not (po-plus-entry-obsolete entry)))
 
-(defun po-plus--jump-obsolete (entry plural-index)
+(defun po-plus--jump-obsolete (entry &rest _)
   (po-plus-entry-obsolete entry))
 
-(defun po-plus--jump-untranslated (entry plural-index)
+(defun po-plus--jump-untranslated (entry plural-index &rest _)
   (let ((msgstr (po-plus--entry-msgstr-with-index entry plural-index)))
     ;; `po-plus--is-entry-untranslated' is not used here, as that
     ;; returns true if any plural msgstr is untranslated, whereas here
     ;; we care about this particular msgstr only
     (string= msgstr "")))
 
-(defun po-plus--jump-fuzzy (entry plural-index)
+(defun po-plus--jump-fuzzy (entry &rest _)
   (po-plus--is-entry-fuzzy entry))
+
+(defun po-plus--jump-msgstr-with-index (entry plural-index target-index &rest _)
+  (if (and
+       (numberp plural-index)
+       (numberp target-index))
+      (= plural-index target-index)
+    (eq plural-index target-index)))
+
+(defun po-plus--jump-entry (entry plural-index target-entry &rest _)
+  (eq entry target-entry))
 
 
 
 ;; --- Section: INTERNAL HELPERS ---
+
+(defun po-plus--jump-to-entry (entry)
+  "Move point to ENTRY using the jump predicate, searching from closest
+end."
+  (let* ((total (point-max))
+         (pos (point))
+         (reverse (if (> pos (/ total 2))
+                      ;; if we're past 50%, start from the end and search backward
+                      (progn (goto-char (point-max)) t)
+                    ;; otherwise, start from beginning and search forward
+                    (progn (goto-char (point-min)) nil))))
+    (po-plus--with-jump-predicate
+     #'po-plus--jump-entry
+     (po-plus-jump-to-next-msgstr reverse entry))))
 
 (defun po-plus--record-undo (undo)
   (unless po-plus--undo-in-progress
@@ -703,13 +746,9 @@ one already exists, it will be effectively replaced."
      (aset (po-plus-entry-msgstr ,entry) ,index ,value)))
 
 (defun po-plus--restore-point-at-msgstr (&optional plural-index)
-  (let* ((idx plural-index)
-         (po-plus-jump-predicate
-          (when (numberp idx)
-            (lambda (_entry prop-idx)
-              (eql idx prop-idx)))))
+  (let* ((po-plus-jump-predicate #'po-plus--jump-msgstr-with-index))
     (goto-char (previous-single-property-change (point) 'entry))
-    (po-plus-jump-to-next-msgstr)))
+    (po-plus-jump-to-next-msgstr nil plural-index)))
 
 (defun po-plus--with-source-window (fn &rest args)
   (let* ((buf (po-plus-edit-session-source-buffer po-plus--edit-session))
@@ -726,6 +765,7 @@ one already exists, it will be effectively replaced."
     (po-plus--increase-fuzzy-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
+      :restore-point (list #'po-plus--jump-to-entry entry)
       :undo (list #'po-plus--unfuzzy-entry entry)
       :redo (list #'po-plus--fuzzy-entry entry)))))
 
@@ -737,6 +777,7 @@ one already exists, it will be effectively replaced."
     (po-plus--decrease-fuzzy-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
+      :restore-point (list #'po-plus--jump-to-entry entry)
       :undo (list #'po-plus--fuzzy-entry entry)
       :redo (list #'po-plus--unfuzzy-entry entry)))))
 
@@ -747,6 +788,7 @@ one already exists, it will be effectively replaced."
     (po-plus--increase-obsolete-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
+      :restore-point (list #'po-plus--jump-to-entry entry)
       :undo (list #'po-plus--unobsolete-entry entry)
       :redo (list #'po-plus--obsolete-entry entry)))))
 
@@ -757,6 +799,7 @@ one already exists, it will be effectively replaced."
     (po-plus--decrease-obsolete-count)
     (po-plus--record-undo
      (make-po-plus-undo-entry
+      :restore-point (list #'po-plus--jump-to-entry entry)
       :undo (list #'po-plus--obsolete-entry entry)
       :redo (list #'po-plus--unobsolete-entry entry)))))
 
@@ -848,10 +891,9 @@ one already exists, it will be effectively replaced."
       (po-plus--refresh-entry entry)
       (po-plus--record-undo
        (make-po-plus-undo-entry
-        :undo (list
-               #'po-plus--set-msgstr entry plural-index old-msgstr)
-        :redo (list
-               #'po-plus--set-msgstr entry plural-index new-msgstr))))))
+        :restore-point (list #'po-plus--jump-to-entry entry)
+        :undo (list #'po-plus--set-msgstr entry plural-index old-msgstr)
+        :redo (list #'po-plus--set-msgstr entry plural-index new-msgstr))))))
 
 (defun po-plus--edit-insert-help-overlays ()
   (when po-plus-edit-help-function-list
